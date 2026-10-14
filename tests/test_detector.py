@@ -2,9 +2,11 @@
 
     python3 -m unittest discover -s tests -v
 """
-import json, os, shutil, subprocess, sys, tempfile, time, unittest
+import contextlib, io, json, os, shutil, sys, tempfile, time, unittest
+from unittest import mock
 
-SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "detector.py")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+import detector
 
 
 def usage_line(read, sidechain=False):
@@ -17,10 +19,13 @@ class Detector(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.home = os.path.join(self.tmp, "home")
-        self.skill = os.path.join(self.tmp, "skill")  # a copy, so --limit writes its own config.json
-        os.makedirs(os.path.join(self.skill, "scripts"))
-        shutil.copy(SCRIPT, os.path.join(self.skill, "scripts"))
+        self.skill = os.path.join(self.tmp, "skill")  # its own config.json, never the real one
+        os.makedirs(self.skill)
         self.projects = os.path.join(self.home, ".claude", "projects")
+        for name, value in (("CONFIG", os.path.join(self.skill, "config.json")), ("PROJECTS", self.projects)):
+            patcher = mock.patch.object(detector, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.work = os.path.join(self.tmp, "My Game")  # a space, like many real folders
         os.makedirs(self.work)
         os.makedirs(self.projects)
@@ -29,13 +34,18 @@ class Detector(unittest.TestCase):
         shutil.rmtree(self.tmp)
 
     def run_it(self, *args, cwd=None, sid=None):
-        env = {"HOME": self.home, "PATH": os.environ.get("PATH", "")}  # nothing else, so no real session id
+        env = {"HOME": self.home}  # nothing else, so no real session id
         if sid is not None:
             env["CLAUDE_CODE_SESSION_ID"] = sid
-        p = subprocess.run([sys.executable, os.path.join(self.skill, "scripts", "detector.py"), *args],
-                           cwd=cwd or self.work, env=env, capture_output=True, text=True, timeout=20)
-        self.assertEqual(p.stderr, "", "no tracebacks")
-        return p.returncode, p.stdout
+        out, here = io.StringIO(), os.getcwd()
+        os.chdir(cwd or self.work)
+        try:
+            with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(sys, "argv", ["detector.py", *args]), \
+                    contextlib.redirect_stdout(out):
+                code = detector.main()  # a crash fails the test with its traceback
+        finally:
+            os.chdir(here)
+        return code, out.getvalue()
 
     def chat(self, folder, name, lines, age=0):
         d = os.path.join(self.projects, folder)

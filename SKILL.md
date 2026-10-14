@@ -1,7 +1,13 @@
 ---
 name: tongs
-description: Tongs helps compact a long chat without losing what matters. Writes a detailed map to a file, draws it as a Forge-themed graph, and gives a /compact line that keeps the important parts. Also does a sendoff to a fresh chat and a setup token scan. Use on /tongs, when the Tongs meter above the prompt turns orange or red, or when the user asks to compact or map the chat.
+description: Tongs helps compact a long chat without losing what matters. Writes a detailed map to a file, draws it as a Forge-themed graph, and gives a /compact line that keeps the important parts. Also does a sendoff to a fresh chat and a setup token scan. Use on /tongs, when the Tongs meter above the prompt turns orange or red, or when the user asks to compact or map the conversation.
 argument-hint: "[sendoff | scan | size | limit <tokens>]"
+permissions:
+  - "shell: runs its own two scripts, detector.py (python3) and draw-map.mjs (node)"
+  - "file_read: the token counts Claude Code saves with each reply, and for /tongs scan the size of your setup files"
+  - "file_write: TONGS-MAP.md in your project, the drawn maps in ~/.claude/tongs-maps, and its own config.json"
+  - "env: CLAUDE_CODE_SESSION_ID, to find this exact chat"
+  - "network: a map server on 127.0.0.1 only, so the app's browser pane can show the map"
 ---
 
 # Tongs
@@ -49,8 +55,8 @@ Follow this prompt exactly (the user wrote it):
 
 <scan>
 Read-only. Look at everything sent with every message and estimate its size (characters divided by four = tokens; label these as estimates):
-- Skills in ~/.claude/skills, including synced and symlinked ones: the name and description of each.
-- Plugins switched on in ~/.claude/settings.json (enabledPlugins), and the skills each one brings.
+- Skills, including synced and symlinked ones (as listed in your own context): the name and description of each.
+- Plugins switched on (from `claude plugin list`), and the skills each one brings.
 - MCP servers, and how many tools each adds.
 - Agents in ~/.claude/agents.
 - CLAUDE.md (global and this project's) and memory files.

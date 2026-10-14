@@ -12,7 +12,7 @@ const FOCUS =
   "Keep the goal, the current task and its exact state, and the user's rules. " +
   'If TONGS-MAP.md exists in this folder, read it after compacting before re-reading any files.'
 
-const k = (n: number) => `${Math.round(n / 1000)}k`
+const k = (n: number) => Math.round(n / 1000) + 'k'
 
 let limit: number | undefined // cached; re-read after each reply
 
@@ -20,7 +20,8 @@ async function getLimit($: EngineInterface): Promise<number> {
   if (limit === undefined) {
     let n: unknown
     try {
-      n = JSON.parse(await $.fs.read(`${await $.env.get('HOME')}/.claude/skills/tongs/config.json`)).limit
+      const home = await $.env.get('HOME')
+      n = JSON.parse(await $.fs.read(`${home}/.claude/skills/tongs/config.json`)).limit
     } catch {} // no config: use the default
     limit = typeof n === 'number' && n > 0 ? n : DEFAULT_LIMIT
   }
@@ -32,7 +33,7 @@ async function compact($: EngineInterface) {
     const r = await $.session.compact({ instructions: FOCUS })
     if (r.skip !== undefined) $.ui.toast(`Compact skipped: ${r.skip}`)
     else {
-      const sizes = r.tokensBefore && r.tokensAfter ? ` ${k(r.tokensBefore)} -> ${k(r.tokensAfter)}.` : ''
+      const sizes = r.tokensBefore && r.tokensAfter ? ' ' + k(r.tokensBefore) + ' -> ' + k(r.tokensAfter) + '.' : ''
       $.ui.toast(`Compacted.${sizes} The meter updates after your next message.`)
     }
   } catch (e) {

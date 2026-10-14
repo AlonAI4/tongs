@@ -107,12 +107,13 @@ if (map.links !== undefined && !Array.isArray(map.links)) errors.push(`"links" m
     if (!isStr(l[end])) errors.push(`${at} needs "${end}" (a node id)`);
     else if (!ids.has(l[end])) errors.push(`${at} "${end}": "${l[end]}" is not a node id`);
   }
-  if (isStr(l.from) && l.from === l.to) errors.push(`${at} links "${l.from}" to itself`);
+  if (isStr(l.from) && l.from === l.to) errors.push(`${at} links ${JSON.stringify(l.from)} to itself`);
   if (l.label !== undefined && !isStr(l.label)) errors.push(`${at} "label" must be text`);
 });
 if (errors.length) {
   const shown = errors.slice(0, 25).map(e => "  - " + e).join("\n");
-  fail(`${errors.length} problem${errors.length === 1 ? "" : "s"} in ${input}:\n${shown}${errors.length > 25 ? "\n  ..." : ""}`);
+  const n = errors.length;
+  fail(`${n} problem${n === 1 ? "" : "s"} in ${input}:\n${shown}${n > 25 ? "\n  ..." : ""}`);
 }
 if (!map.nodes.some(n => n.type === "goal")) console.warn("draw-map: note: no \"goal\" node, so the most linked node goes in the centre.");
 
@@ -161,7 +162,7 @@ const latest = join(latestDir, "latest.html");
 mkdirSync(latestDir, { recursive: true });
 if (resolve(out) !== latest) copyFileSync(out, latest);
 
-console.log(`Tongs map: ${data.nodes.length} nodes, ${data.links.length} links`);
+console.log("Tongs map: " + data.nodes.length + " nodes, " + data.links.length + " links");
 console.log("Wrote  " + out);
 console.log("Latest " + latest);
 
