@@ -1,0 +1,7 @@
+# your own limit (set with /tongs limit)
+config.json
+.state.json
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store

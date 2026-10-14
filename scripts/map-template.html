@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- No network at all: everything this page needs is inside it. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:; img-src data:">
+<title>/*__TITLE__*/</title>
+<style>
+/*__FONTS__*/
+
+/* Colours and fonts follow Forge Map (~/forge/forge-map/template.html). */
+:root{
+  color-scheme:light; --ground:#E4E4E0; --surface:#F2F2EF; --surface-2:#EAEAE5; --surface-3:#DEDDD7;
+  --line:#CBCAC3; --line-strong:#AEACA3;
+  --ink:#191512; --ink-2:#4A423A; --ink-dim:#655C52; --edge:#848377;
+  --ember:#C0430A; --ember-text:#953405; --yellow:#B87A12; --white-heat:#8A6A2E; --cherry:#A32213;
+  --t-goal:#C0430A; --t-decision:#A86E0C; --t-file:hsl(205 55% 36%); --t-done:hsl(140 45% 30%);
+  --t-now:hsl(330 60% 42%); --t-open:hsl(268 38% 46%); --t-gotcha:#A32213; --t-rule:hsl(176 55% 27%);
+  --shadow:0 1px 2px rgba(25,21,18,.08),0 8px 24px -12px rgba(25,21,18,.24);
+  --scan:rgba(25,21,18,.035);
+  --f-display:"Big Shoulders Display","Arial Narrow","Helvetica Neue Condensed Bold",Impact,sans-serif;
+  --f-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  --r:3px; --r-lg:5px; --rail:272px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark; --ground:#0D0B0A; --surface:#151210; --surface-2:#1C1815; --surface-3:#241F1A;
+    --line:#2E2721; --line-strong:#463C32;
+    --ink:#F2EBE0; --ink-2:#C3B7A8; --ink-dim:#A2968A; --edge:#7A6656;
+    --ember:#FF6A1F; --ember-text:#FF8A45; --yellow:#FFB03A; --white-heat:#FFE6C0; --cherry:#D6341C;
+    --t-goal:#FF6A1F; --t-decision:#FFB03A; --t-file:hsl(205 60% 66%); --t-done:hsl(140 40% 56%);
+    --t-now:hsl(330 85% 72%); --t-open:hsl(268 60% 76%); --t-gotcha:#E8492C; --t-rule:hsl(176 48% 52%);
+    --shadow:0 1px 0 rgba(255,255,255,.03),0 16px 40px -18px rgba(0,0,0,.9);
+    --scan:rgba(255,255,255,.02);
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark; --ground:#0D0B0A; --surface:#151210; --surface-2:#1C1815; --surface-3:#241F1A;
+  --line:#2E2721; --line-strong:#463C32;
+  --ink:#F2EBE0; --ink-2:#C3B7A8; --ink-dim:#A2968A; --edge:#7A6656;
+  --ember:#FF6A1F; --ember-text:#FF8A45; --yellow:#FFB03A; --white-heat:#FFE6C0; --cherry:#D6341C;
+  --t-goal:#FF6A1F; --t-decision:#FFB03A; --t-file:hsl(205 60% 66%); --t-done:hsl(140 40% 56%);
+  --t-now:hsl(330 85% 72%); --t-open:hsl(268 60% 76%); --t-gotcha:#E8492C; --t-rule:hsl(176 48% 52%);
+  --shadow:0 1px 0 rgba(255,255,255,.03),0 16px 40px -18px rgba(0,0,0,.9);
+  --scan:rgba(255,255,255,.02);
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--f-body);font-size:.9375rem;line-height:1.5;-webkit-font-smoothing:antialiased;overflow:hidden}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;background:repeating-linear-gradient(0deg,transparent 0 3px,var(--scan) 3px 4px)}
+button,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:2px}
+::selection{background:var(--ember);color:#120E0B}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}
+
+.app{position:relative;z-index:1;display:grid;grid-template-columns:var(--rail) minmax(0,1fr);height:100vh;height:100dvh}
+
+/* ---------- rail ---------- */
+.rail{background:var(--surface);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.brand{display:flex;align-items:center;gap:11px;padding:16px 16px 14px;border-bottom:1px solid var(--line)}
+.brand-mark{width:44px;height:44px;flex:none}
+.brand-mark svg{width:44px;height:44px;display:block;overflow:visible}
+.billet{fill:var(--ember);animation:heat 2.4s ease-in-out infinite}
+@keyframes heat{0%,100%{fill:var(--ember)}45%{fill:var(--yellow)}55%{fill:var(--white-heat)}}
+.brand-name{font-family:var(--f-display);font-weight:800;font-size:2rem;line-height:.86;letter-spacing:.02em;text-transform:uppercase}
+.brand-sub{font-family:var(--f-mono);font-size:.6875rem;letter-spacing:.19em;text-transform:uppercase;color:var(--ink-dim);margin-top:3px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rail-search{position:relative;margin:12px 12px 4px}
+.rail-search svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--ink-dim);pointer-events:none}
+.rail-search input{width:100%;padding:8px 10px 8px 30px;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r);font-size:.875rem}
+.rail-search input::placeholder{color:var(--ink-dim)}
+.rail-search input:focus{border-color:var(--ember);outline:none}
+.rail-scroll{flex:1;min-height:0;overflow:auto;padding:6px 8px 16px}
+.rail-label{font-family:var(--f-mono);font-size:.6875rem;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-dim);padding:14px 8px 6px;display:flex;justify-content:space-between;align-items:center}
+.rail-label button{background:none;border:0;padding:0;font:inherit;letter-spacing:inherit;text-transform:inherit;color:var(--ember-text);cursor:pointer}
+.row{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:none;border:0;border-left:2px solid transparent;padding:6px 8px;border-radius:0 var(--r) var(--r) 0;cursor:pointer;font-size:.8125rem;line-height:1.3}
+.row:hover{background:var(--surface-3)}
+.row[aria-pressed="true"]{background:var(--surface-3);border-left-color:var(--ember)}
+.glyph{width:12px;height:12px;flex:none;display:block}
+.row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .ct{font-family:var(--f-mono);font-size:.6875rem;color:var(--ink-dim)}
+.row .sub{display:block;font-family:var(--f-mono);font-size:.6875rem;color:var(--ink-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:4px 8px 0}
+.stat{border:1px solid var(--line);border-radius:var(--r);padding:6px 8px;background:var(--surface-2)}
+.stat b{display:block;font-family:var(--f-display);font-weight:800;font-size:1.5rem;line-height:1;color:var(--ember-text)}
+.stat span{font-family:var(--f-mono);font-size:.625rem;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-dim)}
+.meta{margin:10px 8px 0;font-family:var(--f-mono);font-size:.6875rem;line-height:1.55;color:var(--ink-dim);word-break:break-all}
+.meta b{font-weight:500;color:var(--ink-2)}
+.note{padding:10px;font-size:.8125rem;color:var(--ink-dim)}
+
+/* ---------- main ---------- */
+.main{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column}
+.topbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--surface);flex:none}
+.topbar h1{margin:0;font-family:var(--f-display);font-weight:700;font-size:1.125rem;letter-spacing:.06em;text-transform:uppercase;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topbar .sp{flex:1}
+.ghost{white-space:nowrap;display:inline-flex;align-items:center;gap:7px;background:none;border:1px solid var(--line-strong);border-radius:var(--r);padding:5px 10px;font-family:var(--f-mono);font-size:.75rem;letter-spacing:.06em;cursor:pointer}
+.ghost:hover{border-color:var(--ember);color:var(--ember-text)}
+#railBtn{display:none}
+.stage{position:relative;flex:1;min-height:0}
+canvas#c{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+canvas#c.drag{cursor:grabbing}
+canvas#c.hit{cursor:pointer}
+.hint{position:absolute;left:14px;bottom:12px;font-family:var(--f-mono);font-size:.6875rem;letter-spacing:.06em;color:var(--ink-dim);background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:6px 10px;pointer-events:none}
+.zoomc{position:absolute;right:14px;bottom:12px;display:flex;flex-direction:column;gap:6px}
+.zoomc .ghost{justify-content:center;background:var(--surface);min-width:34px}
+.tip{position:fixed;z-index:60;max-width:280px;padding:7px 10px;border-radius:var(--r);background:var(--ink);color:var(--surface);font-size:.8125rem;line-height:1.35;pointer-events:none;box-shadow:0 6px 20px rgba(0,0,0,.25);display:none}
+.tip small{display:block;font-family:var(--f-mono);font-size:.6875rem;opacity:.75}
+
+/* details panel */
+.panel{position:absolute;top:12px;right:12px;bottom:12px;width:min(350px,calc(100% - 24px));background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--r-lg);box-shadow:var(--shadow);display:none;flex-direction:column;min-height:0;z-index:5}
+.panel[data-open="1"]{display:flex}
+.p-head{padding:14px 16px 12px;border-bottom:1px solid var(--line);position:relative}
+.p-head h2{margin:0 28px 8px 0;font-family:var(--f-display);font-weight:800;font-size:1.75rem;line-height:.95;letter-spacing:.02em;word-break:break-word}
+.p-x{position:absolute;top:8px;right:8px;width:28px;height:28px;border:0;background:none;cursor:pointer;color:var(--ink-dim);font-size:1.25rem;line-height:1;border-radius:var(--r)}
+.p-x:hover{background:var(--surface-3);color:var(--ink)}
+.badges{display:flex;flex-wrap:wrap;gap:6px}
+.badge{display:inline-flex;align-items:center;gap:6px;font-family:var(--f-mono);font-size:.6875rem;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line-strong);border-radius:var(--r);padding:2px 7px;color:var(--ink-2)}
+.p-detail{margin:12px 0 0;font-size:.875rem;line-height:1.5;color:var(--ink-2);white-space:pre-wrap;word-break:break-word}
+.p-meta{margin-top:10px;font-family:var(--f-mono);font-size:.6875rem;color:var(--ink-dim);word-break:break-all}
+.p-body{flex:1;min-height:0;overflow:auto;padding:4px 8px 14px}
+.nb{display:block;width:100%;text-align:left;background:none;border:0;border-left:2px solid var(--ember);padding:7px 10px;margin:6px 0 0;cursor:pointer;font-size:.8125rem}
+.nb:hover{background:var(--surface-3)}
+.nb b{display:flex;align-items:center;gap:7px;font-weight:600;overflow:hidden;text-overflow:ellipsis}
+.nb small{display:block;font-family:var(--f-mono);font-size:.6875rem;color:var(--ink-dim)}
+.nb .arrow{color:var(--ember-text)}
+
+@media (max-width:860px){
+  .app{grid-template-columns:minmax(0,1fr)}
+  .rail{position:fixed;z-index:30;top:0;bottom:0;left:0;width:min(300px,86vw);transform:translateX(-102%);transition:transform .2s;box-shadow:var(--shadow)}
+  .rail[data-open="1"]{transform:none}
+  #railBtn{display:inline-flex}
+  .topbar{padding:8px 10px}
+  .panel{top:auto;left:8px;right:8px;bottom:8px;width:auto;max-height:50%}
+  .hint{display:none}
+}
+</style>
+<script>
+/* Apply a saved theme before first paint, so it does not flash. */
+(function(){ try{ var t=localStorage.getItem("tongs-map-theme"); if(t==="light"||t==="dark") document.documentElement.setAttribute("data-theme",t); }catch(e){} })();
+</script>
+</head>
+<body>
+<div class="app">
+  <aside class="rail" id="rail">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 88 88" aria-hidden="true" focusable="false">
+          <rect class="billet" x="26" y="13" width="36" height="9" rx="1"/>
+          <g fill="none" stroke-linecap="round" stroke-linejoin="round" style="stroke:var(--ink)">
+            <path d="M31 11 L28 24 L36 33 L56 80" stroke-width="5"/>
+            <path d="M57 11 L60 24 L52 33 L32 80" stroke-width="5"/>
+          </g>
+          <circle cx="44" cy="61" r="4.2" style="fill:var(--line-strong);stroke:var(--ink)" stroke-width="2"/>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-name">Tongs Map</div>
+        <div class="brand-sub" id="brandSub">Chat map</div>
+      </div>
+    </div>
+    <div class="rail-search">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <label for="q" class="vh">Search the map</label>
+      <input id="q" type="search" placeholder="Search" autocomplete="off">
+    </div>
+    <div class="rail-scroll" id="railBody"></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <button class="ghost" id="railBtn" aria-expanded="false" aria-controls="rail">Legend</button>
+      <h1 id="title"></h1>
+      <div class="sp"></div>
+      <button class="ghost" id="themeBtn" aria-pressed="false">
+        <svg id="themeIcon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"></svg>
+        <span id="themeLabel">Dark</span>
+      </button>
+    </div>
+    <div class="stage" id="stage">
+      <canvas id="c" aria-label="Map of this chat. Use the search box or the lists in the side panel for keyboard access."></canvas>
+      <div class="hint" id="hint">Click a shape to see its links. Press / to search. Scroll to zoom, drag to move.</div>
+      <div class="zoomc">
+        <button class="ghost" id="zin" aria-label="Zoom in">+</button>
+        <button class="ghost" id="zout" aria-label="Zoom out">&minus;</button>
+        <button class="ghost" id="zfit" aria-label="Fit everything">Fit</button>
+      </div>
+      <section class="panel" id="panel" data-open="0" aria-live="polite"></section>
+    </div>
+  </main>
+</div>
+<div class="tip" id="tip"></div>
+
+<script type="application/json" id="graph-data">/*__DATA__*/</script>
+<script>
+"use strict";
+(function(){
+const $ = s => document.querySelector(s);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let G;
+try { G = JSON.parse(document.getElementById("graph-data").textContent); }
+catch(e){ document.body.textContent = "The map data could not be read. Rebuild it with: node draw-map.mjs <map.json>"; return; }
+
+/* ---------- types: colour + shape, so it reads without colour too ---------- */
+const TYPES = ["goal","decision","file","done","now","open","gotcha","rule"];
+const INFO = {
+  goal:     {name:"Goal",     what:"what this chat is for",        shape:"circle"},
+  decision: {name:"Decision", what:"what was chosen, and why",     shape:"diamond"},
+  file:     {name:"File",     what:"a path that matters",          shape:"square"},
+  done:     {name:"Done",     what:"finished, with its check",     shape:"circle"},
+  now:      {name:"Now",      what:"in progress right now",        shape:"ring"},
+  open:     {name:"Open",     what:"a question still unanswered",  shape:"circle"},
+  gotcha:   {name:"Gotcha",   what:"a trap, so it isn't repeated", shape:"triangle"},
+  rule:     {name:"Rule",     what:"a rule or limit",              shape:"hex"}
+};
+
+/* ---------- data ---------- */
+const N = G.nodes.map((a,i)=>({i, id:a.id, label:a.label, type:a.type, detail:a.detail||"", x:0, y:0, vx:0, vy:0, deg:0, nb:[], pin:false}));
+const byId = {}; N.forEach(n=>byId[n.id]=n.i);
+const E = (G.links||[]).map(l=>({s:byId[l.from], t:byId[l.to], rel:l.label||"links to"}));
+E.forEach(e=>{ N[e.s].deg++; N[e.t].deg++; N[e.s].nb.push({n:e.t, e, out:true}); N[e.t].nb.push({n:e.s, e, out:false}); });
+const count = {}; TYPES.forEach(t=>count[t]=0); N.forEach(n=>count[n.type]++);
+const maxDeg = Math.max(1, ...N.map(n=>n.deg));
+const nodeR = n => n.isCenter ? 15 : 5.5 + 6*Math.sqrt(n.deg/maxDeg);
+
+/* ---------- layout: goal pinned in the centre, the rest relaxed around it ---------- */
+(function layout(){
+  const center = N.find(n=>n.type==="goal") || N.slice().sort((a,b)=>b.deg-a.deg)[0];
+  center.isCenter = true; center.pin = true;
+  const rest = N.filter(n=>n!==center).sort((a,b)=>TYPES.indexOf(a.type)-TYPES.indexOf(b.type) || a.i-b.i);
+  const R = 140 + 22*Math.sqrt(N.length);
+  rest.forEach((n,k)=>{
+    const ang = -Math.PI/2 + 2*Math.PI*k/Math.max(1,rest.length);
+    const r = R*(k%2 ? 1.3 : 1);
+    n.x = Math.cos(ang)*r; n.y = Math.sin(ang)*r;
+  });
+  const L = 150, STEPS = 500;
+  for(let it=0; it<STEPS; it++){
+    const cool = 1 - it/STEPS;
+    for(let a=0; a<N.length; a++) for(let b=a+1; b<N.length; b++){
+      const A=N[a], B=N[b];
+      let dx=A.x-B.x, dy=A.y-B.y, d2=dx*dx+dy*dy;
+      if(d2<1){ dx=0.7; dy=0.7; d2=1; }
+      const d=Math.sqrt(d2), f=16000/d2, fx=f*dx/d, fy=f*dy/d;
+      A.vx+=fx; A.vy+=fy; B.vx-=fx; B.vy-=fy;
+    }
+    for(const e of E){
+      const A=N[e.s], B=N[e.t], dx=B.x-A.x, dy=B.y-A.y, d=Math.max(1,Math.hypot(dx,dy));
+      const f=(d-L)*0.035, fx=f*dx/d, fy=f*dy/d;
+      A.vx+=fx; A.vy+=fy; B.vx-=fx; B.vy-=fy;
+    }
+    for(const n of N){
+      n.vx -= n.x*0.012; n.vy -= n.y*0.012;
+      if(n.pin){ n.vx=0; n.vy=0; continue; }
+      const sp=Math.hypot(n.vx,n.vy), max=1+40*cool;
+      if(sp>max){ n.vx*=max/sp; n.vy*=max/sp; }
+      n.x+=n.vx; n.y+=n.vy; n.vx*=0.55; n.vy*=0.55;
+    }
+  }
+})();
+
+/* ---------- theme ---------- */
+let TK = {}, COL = {};
+function readTokens(){
+  const cs = getComputedStyle(document.documentElement);
+  ["--ground","--ink","--ink-2","--ink-dim","--edge","--ember","--ember-text","--white-heat","--surface"].forEach(k=>TK[k]=cs.getPropertyValue(k).trim());
+  TYPES.forEach(t=>COL[t]=cs.getPropertyValue("--t-"+t).trim());
+}
+function isDark(){
+  const t = document.documentElement.getAttribute("data-theme");
+  return t ? t==="dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+}
+function applyTheme(){
+  const dark = isDark();
+  $("#themeLabel").textContent = dark ? "Dark" : "Light";
+  $("#themeIcon").innerHTML = dark
+    ? '<path d="M20.5 14.6A8.6 8.6 0 019.4 3.5a8.6 8.6 0 1011.1 11.1z"/>'
+    : '<circle cx="12" cy="12" r="4.4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/>';
+  const b = $("#themeBtn");
+  b.setAttribute("aria-pressed", String(dark));
+  b.setAttribute("aria-label", dark ? "Theme: dark. Switch to light." : "Theme: light. Switch to dark.");
+  readTokens(); renderRail(); renderPanel(); draw();
+}
+$("#themeBtn").addEventListener("click", ()=>{
+  const next = isDark() ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try{ localStorage.setItem("tongs-map-theme", next); }catch(e){}
+  applyTheme();
+});
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", ()=>{ if(!document.documentElement.hasAttribute("data-theme")) applyTheme(); });
+
+/* a small SVG of a type's shape, for the legend and lists */
+function glyph(type){
+  const c = COL[type], sh = INFO[type].shape;
+  const body = sh==="square" ? '<rect x="1.5" y="1.5" width="9" height="9" fill="'+c+'"/>'
+    : sh==="diamond" ? '<path d="M6 .5L11.5 6 6 11.5.5 6z" fill="'+c+'"/>'
+    : sh==="triangle" ? '<path d="M6 1L11.5 10.5H.5z" fill="'+c+'"/>'
+    : sh==="hex" ? '<path d="M3.2 1.2h5.6L11.6 6 8.8 10.8H3.2L.4 6z" fill="'+c+'"/>'
+    : sh==="ring" ? '<circle cx="6" cy="6" r="3.2" fill="'+c+'"/><circle cx="6" cy="6" r="5.2" fill="none" stroke="'+c+'" stroke-width="1.2"/>'
+    : '<circle cx="6" cy="6" r="5" fill="'+c+'"/>';
+  return '<svg class="glyph" viewBox="0 0 12 12" aria-hidden="true">'+body+'</svg>';
+}
+
+/* ---------- state ---------- */
+const cv = $("#c"), ctx = cv.getContext("2d");
+let W=0, H=0, DPR=1;
+const V = {x:0, y:0, k:1};
+let selected = -1, hover = -1, focusType = null, query = "", matches = null;
+
+function resize(){
+  DPR = Math.min(2, window.devicePixelRatio||1);
+  const r = $("#stage").getBoundingClientRect();
+  W = Math.max(1, r.width); H = Math.max(1, r.height);
+  cv.width = Math.round(W*DPR); cv.height = Math.round(H*DPR);
+  draw();
+}
+function bounds(ns){
+  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+  ns.forEach(n=>{ x0=Math.min(x0,n.x); y0=Math.min(y0,n.y); x1=Math.max(x1,n.x); y1=Math.max(y1,n.y); });
+  return [x0,y0,x1,y1];
+}
+function fit(animate){
+  const [x0,y0,x1,y1] = bounds(N);
+  // Room for labels on the right on a wide stage; a narrow one (phone, the app's side pane) uses all of it.
+  const pad = Math.min(70, W*.05), side = W > 700 ? 120 : 0;
+  const k = Math.max(.05, Math.min(1.6, (W-2*pad-side)/Math.max(1,x1-x0), (H-2*pad)/Math.max(1,y1-y0)));
+  goto({k, x: W/2 - k*(x0+x1)/2 - (side ? 40*k : 0), y: H/2 - k*(y0+y1)/2}, animate);
+}
+let anim = null;
+function goto(t, animate){
+  if(anim) cancelAnimationFrame(anim);
+  if(!animate || matchMedia("(prefers-reduced-motion: reduce)").matches){ Object.assign(V,t); draw(); return; }
+  const s = {...V}, t0 = performance.now(), D = 320;
+  (function step(now){
+    const p = Math.min(1,(now-t0)/D), e = 1-Math.pow(1-p,3);
+    V.x = s.x+(t.x-s.x)*e; V.y = s.y+(t.y-s.y)*e; V.k = s.k+(t.k-s.k)*e; draw();
+    if(p<1) anim = requestAnimationFrame(step);
+  })(t0);
+}
+function panelW(){ return $("#panel").dataset.open==="1" && W>860 ? 362 : 0; }
+function centerOn(n){
+  const pw = panelW(), pts = [n, ...n.nb.map(o=>N[o.n])];
+  const [x0,y0,x1,y1] = bounds(pts);
+  const pad = 90, aw = Math.max(80, W-pw-2*pad), ah = Math.max(80, H-2*pad);
+  const k = Math.min(1.6, Math.max(.2, Math.min(aw/Math.max(1,x1-x0), ah/Math.max(1,y1-y0))));
+  const cx = pts.length>1 ? (x0+x1)/2 : n.x, cy = pts.length>1 ? (y0+y1)/2 : n.y;
+  goto({k, x:(W-pw)/2 - k*cx, y:H/2 - k*cy}, true);
+}
+const sx = n => n.x*V.k+V.x, sy = n => n.y*V.k+V.y;
+const rr = n => nodeR(n)*Math.min(1.6,Math.max(.6,Math.sqrt(V.k)));
+
+/* ---------- which nodes are lit ---------- */
+function activeSet(){
+  if(selected>=0){ const s = new Set([selected]); N[selected].nb.forEach(o=>s.add(o.n)); return s; }
+  if(matches) return matches;
+  if(focusType!==null){ const s = new Set(); N.forEach(n=>{ if(n.type===focusType) s.add(n.i); }); return s; }
+  return null;
+}
+
+/* ---------- drawing ---------- */
+function shape(n,x,y,r){
+  const sh = INFO[n.type].shape;
+  ctx.beginPath();
+  if(sh==="square"){ const s=r*.88; ctx.rect(x-s,y-s,2*s,2*s); }
+  else if(sh==="diamond"){ const s=r*1.25; ctx.moveTo(x,y-s); ctx.lineTo(x+s,y); ctx.lineTo(x,y+s); ctx.lineTo(x-s,y); ctx.closePath(); }
+  else if(sh==="triangle"){ const s=r*1.3; ctx.moveTo(x,y-s); ctx.lineTo(x+s*.95,y+s*.65); ctx.lineTo(x-s*.95,y+s*.65); ctx.closePath(); }
+  else if(sh==="hex"){ for(let k=0;k<6;k++){ const a=k*Math.PI/3; const px=x+r*1.08*Math.cos(a), py=y+r*1.08*Math.sin(a); k?ctx.lineTo(px,py):ctx.moveTo(px,py); } ctx.closePath(); }
+  else ctx.arc(x,y,r,0,6.2832);
+}
+function draw(){
+  if(!W) return;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.clearRect(0,0,W,H);
+  const act = activeSet();
+  const lit = i => !act || act.has(i);
+  const mono = getComputedStyle(document.body).getPropertyValue("--f-mono");
+
+  // links
+  const base = new Path2D(), hi = new Path2D(), hiEdges = [];
+  E.forEach(e=>{
+    const a=N[e.s], b=N[e.t];
+    const on = selected>=0 ? (e.s===selected || e.t===selected) : (act ? (act.has(e.s)&&act.has(e.t)) : false);
+    (on?hi:base).moveTo(sx(a),sy(a)); (on?hi:base).lineTo(sx(b),sy(b));
+    if(on) hiEdges.push(e);
+  });
+  ctx.lineWidth = 1; ctx.strokeStyle = TK["--edge"]; ctx.globalAlpha = act ? .12 : .45; ctx.stroke(base);
+  ctx.globalAlpha = .95; ctx.lineWidth = 1.6; ctx.strokeStyle = TK["--ember-text"]; ctx.stroke(hi);
+  // arrowheads on lit links, so "from -> to" is readable
+  ctx.fillStyle = TK["--ember-text"];
+  hiEdges.forEach(e=>{
+    const a=N[e.s], b=N[e.t], dx=sx(b)-sx(a), dy=sy(b)-sy(a), d=Math.hypot(dx,dy); if(d<30) return;
+    const ux=dx/d, uy=dy/d, tx=sx(b)-ux*(rr(b)+4), ty=sy(b)-uy*(rr(b)+4);
+    ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(tx-ux*8-uy*4, ty-uy*8+ux*4); ctx.lineTo(tx-ux*8+uy*4, ty-uy*8-ux*4); ctx.closePath(); ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  // nodes, dim ones first so lit ones sit on top
+  const order = N.slice().sort((a,b)=> (lit(a.i)-lit(b.i)) || (a.deg-b.deg));
+  for(const n of order){
+    const x=sx(n), y=sy(n);
+    if(x<-40||y<-40||x>W+40||y>H+40) continue;
+    const r = rr(n);
+    ctx.globalAlpha = lit(n.i) ? 1 : .16;
+    if(n.isCenter){ ctx.fillStyle = COL[n.type]; ctx.globalAlpha *= .18; ctx.beginPath(); ctx.arc(x,y,r*1.9,0,6.2832); ctx.fill(); ctx.globalAlpha = lit(n.i) ? 1 : .16; }
+    ctx.fillStyle = COL[n.type]; ctx.strokeStyle = TK["--ground"]; ctx.lineWidth = 1.5;
+    shape(n,x,y,r); ctx.fill(); ctx.stroke();
+    if(n.type==="now"){ ctx.strokeStyle = COL.now; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x,y,r+4,0,6.2832); ctx.stroke(); }
+    if(n.i===selected || n.i===hover){
+      ctx.globalAlpha = 1; ctx.lineWidth = 2; ctx.strokeStyle = n.i===selected ? TK["--white-heat"] : TK["--ink"];
+      ctx.beginPath(); ctx.arc(x,y,r+(n.type==="now"?8:5),0,6.2832); ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  // labels on lit links (what the link means)
+  ctx.textBaseline = "middle"; ctx.lineJoin = "round"; ctx.textAlign = "center";
+  if(selected>=0){
+    ctx.font = "400 10px "+mono;
+    hiEdges.forEach(e=>{
+      const a=N[e.s], b=N[e.t], mx=(sx(a)+sx(b))/2, my=(sy(a)+sy(b))/2;
+      ctx.lineWidth = 3.5; ctx.strokeStyle = TK["--ground"]; ctx.strokeText(e.rel,mx,my);
+      ctx.fillStyle = TK["--ember-text"]; ctx.fillText(e.rel,mx,my);
+    });
+  }
+  ctx.textAlign = "left";
+
+  // node labels, most important first. Every lit node keeps its label: when the spot
+  // right of the node is taken, try left, above, below, then a shorter text; if every
+  // spot is taken it is drawn short on the right anyway, never hidden.
+  ctx.font = "500 11px "+mono;
+  const cand = N.filter(n=> n.i===selected || n.i===hover || n.isCenter || lit(n.i));
+  cand.sort((a,b)=> ((b.i===selected||b.i===hover) - (a.i===selected||a.i===hover)) || (!!b.isCenter - !!a.isCenter) || (b.deg-a.deg));
+  const used = [], taken = b=> b[0]<2 || b[0]+b[2]>W-2 || b[1]<0 || b[1]+b[3]>H // off the canvas counts as taken
+    || used.some(u=> b[0]<u[0]+u[2] && b[0]+b[2]>u[0] && b[1]<u[1]+u[3] && b[1]+b[3]>u[1]);
+  for(const n of cand){
+    const x=sx(n), y=sy(n), must = n.i===selected || n.i===hover;
+    if(x<-60||y<-20||x>W+60||y>H+20) continue;
+    const full = n.label.length>48 ? n.label.slice(0,47)+"…" : n.label;
+    const short = n.label.length>22 ? n.label.slice(0,21)+"…" : n.label;
+    const g = rr(n)+(n.type==="now"?9:6);
+    let text, bx, ty;
+    for(const t of [full, short]){
+      const w = ctx.measureText(t).width;
+      const spot = [[x+g,y],[x-g-w,y],[x-w/2,y-g-7],[x-w/2,y+g+7],[x+g,y-15],[x+g,y+15]].find(([sx0,sy0])=> !taken([sx0,sy0-8,w,16]));
+      if(spot){ text=t; [bx,ty]=spot; break; }
+    }
+    if(text===undefined){ text=short; bx=Math.max(2, Math.min(x+g, W-2-ctx.measureText(short).width)); ty=y; }
+    used.push([bx,ty-8,ctx.measureText(text).width,16]);
+    ctx.globalAlpha = lit(n.i) ? 1 : .35; // the goal's label always shows, dimmed when it isn't lit
+    ctx.lineWidth = 3.5; ctx.strokeStyle = TK["--ground"]; ctx.strokeText(text,bx,ty);
+    ctx.fillStyle = must || n.isCenter ? TK["--ink"] : TK["--ink-2"]; ctx.fillText(text,bx,ty);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- picking, pan, zoom, drag ---------- */
+function pick(px,py){
+  let best=-1, bd=1e9;
+  for(const n of N){
+    const d = Math.hypot(sx(n)-px, sy(n)-py), r = rr(n)+5;
+    if(d<r && d<bd){ bd=d; best=n.i; }
+  }
+  return best;
+}
+const ptrs = new Map();
+let dragNode=-1, panning=false, moved=0, last=null, pinch0=null;
+cv.addEventListener("pointerdown", ev=>{
+  cv.setPointerCapture(ev.pointerId);
+  const r = cv.getBoundingClientRect(), p = {x:ev.clientX-r.left, y:ev.clientY-r.top};
+  ptrs.set(ev.pointerId, p); moved = 0; last = p;
+  if(ptrs.size===2){ const [a,b]=[...ptrs.values()]; pinch0 = {d:Math.hypot(a.x-b.x,a.y-b.y), k:V.k}; dragNode=-1; panning=false; return; }
+  dragNode = pick(p.x,p.y); panning = dragNode<0;
+  if(panning) cv.classList.add("drag");
+  if(anim) cancelAnimationFrame(anim);
+});
+cv.addEventListener("pointermove", ev=>{
+  const r = cv.getBoundingClientRect(), p = {x:ev.clientX-r.left, y:ev.clientY-r.top};
+  if(ptrs.has(ev.pointerId)) ptrs.set(ev.pointerId,p);
+  if(ptrs.size===2 && pinch0){
+    const [a,b]=[...ptrs.values()], d=Math.hypot(a.x-b.x,a.y-b.y);
+    zoomAt((a.x+b.x)/2,(a.y+b.y)/2, pinch0.k*d/pinch0.d / V.k); moved=9; return;
+  }
+  if(ptrs.size===1){
+    const dx=p.x-last.x, dy=p.y-last.y; moved += Math.abs(dx)+Math.abs(dy); last=p;
+    if(dragNode>=0 && moved>3){ N[dragNode].x += dx/V.k; N[dragNode].y += dy/V.k; draw(); hideTip(); return; }
+    if(panning){ V.x+=dx; V.y+=dy; draw(); return; }
+  }
+  const h = pick(p.x,p.y);
+  if(h!==hover){ hover=h; cv.classList.toggle("hit", h>=0); draw(); }
+  if(h>=0) showTip(h, ev.clientX, ev.clientY); else hideTip();
+});
+function up(ev){
+  const had = ptrs.has(ev.pointerId); ptrs.delete(ev.pointerId); if(ptrs.size<2) pinch0=null;
+  cv.classList.remove("drag");
+  if(!had || ptrs.size>0) return;
+  if(moved<=4){ if(dragNode>=0) select(dragNode,false); else if(selected>=0 || focusType!==null || query) clearAll(); }
+  dragNode=-1; panning=false;
+}
+cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
+cv.addEventListener("pointerleave", ()=>{ if(hover>=0){ hover=-1; hideTip(); draw(); } });
+function zoomAt(px,py,f){
+  const k = Math.min(6, Math.max(.1, V.k*f)), real = k/V.k;
+  V.x = px-(px-V.x)*real; V.y = py-(py-V.y)*real; V.k = k; draw();
+}
+cv.addEventListener("wheel", ev=>{
+  ev.preventDefault();
+  const r = cv.getBoundingClientRect();
+  zoomAt(ev.clientX-r.left, ev.clientY-r.top, Math.exp(-ev.deltaY*(ev.ctrlKey?.01:.0016)));
+},{passive:false});
+$("#zin").onclick = ()=>zoomAt(W/2,H/2,1.35);
+$("#zout").onclick = ()=>zoomAt(W/2,H/2,1/1.35);
+$("#zfit").onclick = ()=>fit(true);
+
+/* tooltip */
+const tip = $("#tip");
+function showTip(i,x,y){
+  const n=N[i];
+  tip.innerHTML = esc(n.label)+"<small>"+esc(INFO[n.type].name)+" &middot; "+n.deg+" link"+(n.deg===1?"":"s")+"</small>";
+  tip.style.display="block";
+  tip.style.left = Math.min(innerWidth-300, x+14)+"px"; tip.style.top = (y+16)+"px";
+}
+function hideTip(){ tip.style.display="none"; }
+
+/* ---------- selecting + the details panel ---------- */
+function select(i, center){
+  selected = i; hover=-1; hideTip();
+  renderPanel(); renderRail(); draw();
+  $("#hint").style.display = "none";
+  if(center!==false) centerOn(N[i]);
+  else { const pw = panelW(); if(sx(N[i])>W-pw-20) goto({k:V.k, x:V.x-(sx(N[i])-(W-pw)/2), y:V.y}, true); }
+}
+function clearAll(){
+  selected=-1; focusType=null; query=""; matches=null; $("#q").value="";
+  renderPanel(); renderRail(); draw();
+}
+function renderPanel(){
+  const p = $("#panel");
+  if(selected<0){ p.dataset.open="0"; p.innerHTML=""; return; }
+  const n = N[selected];
+  const items = n.nb.slice().sort((a,b)=> (b.out-a.out) || (N[b.n].deg-N[a.n].deg));
+  p.dataset.open="1";
+  p.innerHTML =
+    '<div class="p-head"><button class="p-x" id="px" aria-label="Close details">&times;</button>'
+    + '<h2>'+esc(n.label)+'</h2>'
+    + '<div class="badges"><span class="badge">'+glyph(n.type)+esc(INFO[n.type].name)+'</span>'
+    + '<span class="badge">'+n.deg+' link'+(n.deg===1?"":"s")+'</span></div>'
+    + (n.detail ? '<p class="p-detail">'+esc(n.detail)+'</p>' : '')
+    + '<div class="p-meta">id: '+esc(n.id)+'</div></div>'
+    + '<div class="p-body"><div class="rail-label">Linked to ('+items.length+')</div>'
+    + (items.length ? items.map(o=>{
+        const m = N[o.n];
+        return '<button class="nb" data-n="'+m.i+'"><b>'+glyph(m.type)+esc(m.label)+'</b><small>'
+          + (o.out ? esc(o.e.rel)+' <span class="arrow">&rarr;</span>' : '<span class="arrow">&larr;</span> '+esc(o.e.rel))
+          + ' &middot; '+esc(INFO[m.type].name)+'</small></button>';
+      }).join("") : '<div class="note">Nothing is linked to this one.</div>')
+    + '</div>';
+  $("#px").onclick = ()=>{ selected=-1; renderPanel(); renderRail(); draw(); };
+  p.querySelectorAll(".nb").forEach(b=>b.onclick = ()=>select(+b.dataset.n));
+}
+
+/* ---------- rail: stats, legend, lists ---------- */
+function nodeRow(n){
+  return '<button class="row" data-n="'+n.i+'" aria-pressed="'+(n.i===selected)+'">'+glyph(n.type)
+    + '<span class="nm">'+esc(n.label)+'</span><span class="ct">'+n.deg+'</span></button>';
+}
+function renderRail(){
+  const body = $("#railBody");
+  if(query){
+    const list = [...(matches||[])].map(i=>N[i]).sort((a,b)=>b.deg-a.deg);
+    body.innerHTML = '<div class="rail-label"><span>'+list.length+' result'+(list.length===1?"":"s")+'</span><button id="clr">Clear</button></div>'
+      + (list.length ? list.map(nodeRow).join("") : '<div class="note">Nothing matches that.</div>');
+  } else {
+    const meta = [["Project",G.project],["Folder",G.folder],["Updated",G.updated]].filter(m=>m[1]);
+    const listed = focusType!==null ? N.filter(n=>n.type===focusType) : N.slice().sort((a,b)=>b.deg-a.deg).slice(0,8);
+    body.innerHTML =
+      '<div class="stats"><div class="stat"><b>'+N.length+'</b><span>Nodes</span></div><div class="stat"><b>'+E.length+'</b><span>Links</span></div><div class="stat"><b>'+count.open+'</b><span>Open</span></div></div>'
+      + (meta.length ? '<div class="meta">'+meta.map(m=>'<b>'+m[0]+':</b> '+esc(m[1])).join("<br>")+'</div>' : '')
+      + '<div class="rail-label"><span>Types</span>'+(focusType!==null?'<button id="clr">Show all</button>':'')+'</div>'
+      + TYPES.filter(t=>count[t]).map(t=>'<button class="row" data-t="'+t+'" aria-pressed="'+(focusType===t)+'">'+glyph(t)
+          + '<span class="nm">'+INFO[t].name+'<span class="sub">'+INFO[t].what+'</span></span><span class="ct">'+count[t]+'</span></button>').join("")
+      + '<div class="rail-label"><span>'+(focusType!==null ? esc(INFO[focusType].name) : 'Most connected')+'</span></div>'
+      + listed.map(nodeRow).join("")
+      + '<div class="note">Colour and shape show the type. Click one to see what it links to.</div>';
+  }
+  const clr = $("#clr"); if(clr) clr.onclick = clearAll;
+  body.querySelectorAll("[data-n]").forEach(b=>b.onclick = ()=>{ select(+b.dataset.n); closeRail(); });
+  body.querySelectorAll("[data-t]").forEach(b=>b.onclick = ()=>{
+    const t = b.dataset.t; focusType = focusType===t ? null : t; selected=-1; renderPanel(); renderRail(); draw();
+  });
+}
+$("#q").addEventListener("input", ev=>{
+  query = ev.target.value.trim().toLowerCase();
+  if(query){
+    matches = new Set(); selected=-1; focusType=null; renderPanel();
+    N.forEach(n=>{ if((n.label+" "+n.detail+" "+n.id+" "+n.type).toLowerCase().includes(query)) matches.add(n.i); });
+  } else matches = null;
+  renderRail(); draw();
+});
+$("#q").addEventListener("keydown", ev=>{
+  if(ev.key==="Enter" && matches && matches.size){
+    const first = [...matches].map(i=>N[i]).sort((a,b)=>b.deg-a.deg)[0];
+    select(first.i); closeRail();
+  }
+  if(ev.key==="Escape") clearAll();
+});
+addEventListener("keydown", ev=>{
+  if(ev.key==="/" && document.activeElement!==$("#q")){ ev.preventDefault(); openRail(); $("#q").focus(); }
+  else if(ev.key==="Escape" && document.activeElement!==$("#q")){ if(selected>=0||focusType!==null||query) clearAll(); }
+});
+function openRail(){ if(innerWidth<=860){ $("#rail").dataset.open="1"; $("#railBtn").setAttribute("aria-expanded","true"); } }
+function closeRail(){ $("#rail").dataset.open="0"; $("#railBtn").setAttribute("aria-expanded","false"); }
+$("#railBtn").onclick = ()=>{ const o = $("#rail").dataset.open==="1"; $("#rail").dataset.open = o?"0":"1"; $("#railBtn").setAttribute("aria-expanded",String(!o)); };
+
+/* ---------- go ---------- */
+$("#title").textContent = G.title || "Chat map";
+$("#brandSub").textContent = G.project || "Chat map";
+$("#q").placeholder = "Search "+N.length+" nodes  ( / )";
+// Fit once the stage has a real size: a pane that opens hidden first measures 0 x 0.
+let fitted = false;
+new ResizeObserver(()=>{ resize(); if(!fitted && W > 200 && H > 150){ fitted = true; fit(false); } }).observe($("#stage"));
+applyTheme();
+window.__tongsMap = {nodes:N.length, links:E.length};
+})();
+</script>
+</body>
+</html>
