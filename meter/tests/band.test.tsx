@@ -50,8 +50,37 @@ test('without the variable, config.json "limit" is used, with the same 70% and 8
     { size: 140000, text: 'chat 140k / msg · limit 200k · 70%, map it soon with /tongs', color: 'warning', compact: true },
     { size: 169999, text: 'chat 170k / msg · limit 200k · 84%, map it soon with /tongs', color: 'warning', compact: true },
     { size: 170000, text: 'chat 170k / msg · limit 200k · 85%, run /tongs now', color: 'error', compact: true },
-    { size: 250000, text: 'chat 250k / msg · limit 200k · 125%, run /tongs now', color: 'error', compact: true },
+    { size: 199999, text: 'chat 200k / msg · limit 200k · 99%, run /tongs now', color: 'error', compact: true },
+    { size: 200000, text: 'chat 200k / msg · limit 200k · 100%, do you want to compact?', color: 'error', compact: true },
+    { size: 250000, text: 'chat 250k / msg · limit 200k · 125%, do you want to compact?', color: 'error', compact: true },
   ], n => { tokens = n })
+})
+
+test('at the limit it asks; Not now keeps Compact and waits until the chat is back under the limit', async ($, on) => {
+  let tokens = 400000
+  on('ui.render', ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> })
+  mock.env(on, { HOME })
+  on('fs.read', () => ({ value: '{"limit": 400000}' }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens, window: 1000000 }, rateLimits: [] } }))
+  const shows = async (text: string, notNow: boolean) => {
+    const ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'desktop', ...BAND })
+    expect((await ui.find({ type: 'Text', text: /chat/ }))?.text).toBe(text)
+    expect(await ui.find({ key: 'compact' })).toBeDefined()
+    expect((await ui.find({ key: 'not-now' })) !== undefined).toBe(notNow)
+    return ui
+  }
+  const ui = await shows('chat 400k / msg · limit 400k · 100%, do you want to compact?', true)
+  await ui.press({ key: 'not-now' })
+  expect((await ui.find({ type: 'Text', text: /chat/ }))?.text).toBe('chat 400k / msg · limit 400k · 100%, run /tongs now')
+  expect(await ui.find({ key: 'not-now' })).toBeUndefined()
+  expect(await ui.find({ key: 'compact' })).toBeDefined()
+  await ui.unmount()
+  tokens = 520000 // going past it on purpose: no more asking
+  await (await shows('chat 520k / msg · limit 400k · 130%, run /tongs now', false)).unmount()
+  tokens = 399999 // back under (after a compact, say)
+  await (await shows('chat 400k / msg · limit 400k · 99%, run /tongs now', false)).unmount()
+  tokens = 400000 // over again: it asks again
+  await (await shows('chat 400k / msg · limit 400k · 100%, do you want to compact?', true)).unmount()
 })
 
 // Read like Claude Code reads it: a plain number from 100k to 1m, never past the model's window.

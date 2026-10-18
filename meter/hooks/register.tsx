@@ -4,6 +4,8 @@
 // (tongs/config.json). Orange from 70%, red from 85%: time to run /tongs and save
 // the map before auto-compact squashes the chat without one. Both show a Compact
 // button: the same compaction /compact runs, told to keep the important parts.
+// At 100% it asks "do you want to compact?" with Compact and Not now, so a chat can
+// go past the limit on purpose; Not now lasts until the chat is back under it.
 // The size is the engine's own figure ($.session.usage(), free to call), redrawn
 // after each reply. The meter never sends a prompt or starts a Claude turn.
 import type { EngineInterface, Register } from 'claude-code'
@@ -19,6 +21,7 @@ const k = (n: number) => Math.round(n / 1000) + 'k'
 
 type Limit = { max: number; label: string }
 let limit: Limit | undefined // cached; re-read after each reply
+let notNow = false // "Not now" pressed at the limit
 
 async function getLimit($: EngineInterface): Promise<Limit> {
   if (limit === undefined) {
@@ -87,10 +90,13 @@ export const register: Register = on => {
     const at = label + ' ' + k(max)
     const pct = size === undefined ? 0 : Math.floor((size * 100) / max) // never rounds up into the next colour
     const isBig = size !== undefined && pct >= WARN_AT
+    if (pct < 100) notNow = false
+    const ask = pct >= 100 && !notNow
 
     // Colour AND words, so it never relies on colour alone.
     let line
     if (size === undefined) line = <Text dimColor>chat size shows after the first reply · {at}</Text>
+    else if (ask) line = <Text color="error" bold>chat {k(size)} / msg · {at} · {pct}%, do you want to compact?</Text>
     else if (pct >= DANGER_AT) line = <Text color="error" bold>chat {k(size)} / msg · {at} · {pct}%, run /tongs now</Text>
     else if (isBig) line = <Text color="warning">chat {k(size)} / msg · {at} · {pct}%, map it soon with /tongs</Text>
     else line = <Text dimColor>chat {k(size)} / msg · {at}</Text>
@@ -101,6 +107,7 @@ export const register: Register = on => {
         <Box justifyContent="flex-end" gap={1}>
           {line}
           {isBig ? <Button key="compact" label="Compact" onPress={() => compact($)} /> : null}
+          {ask ? <Button key="not-now" label="Not now" onPress={() => { notNow = true; $.ui.invalidate('ui.render') }} /> : null}
         </Box>
       </Box>
     )
