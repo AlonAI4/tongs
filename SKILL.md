@@ -47,7 +47,7 @@ Only step 1, then one plain sentence on what the number means.
 
 ## limit <tokens>
 
-Run `python3 ~/.claude/skills/tongs/scripts/detector.py --limit <tokens>` (accepts `500000`, `500k` or `0.5m`, from 10k to 1m) and show the line it prints. It is how many tokens one message may re-read before the Tongs meter above the prompt turns orange (70%) and red (85%). Default 400k. If `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is set, Claude Code auto-compacts there, so the meter and the size report use that instead, and the command says so.
+Run `python3 ~/.claude/skills/tongs/scripts/detector.py --limit <tokens>` (accepts `500000`, `500k` or `0.5m`, from 10k to 1m) and show the line it prints. It is how many tokens one message may re-read before the Tongs meter above the prompt turns orange (70%) and red (85%). Default 400k. If `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is set, Claude Code auto-compacts about 33k before that window (400k: about 367k), so the meter and the size report use that instead, and the command says so.
 
 ## scan
 

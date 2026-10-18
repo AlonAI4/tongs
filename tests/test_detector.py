@@ -176,22 +176,22 @@ class Detector(unittest.TestCase):
     def test_auto_compact_window_wins_with_the_meters_70_and_85(self):
         with open(os.path.join(self.skill, "config.json"), "w") as f:
             json.dump({"limit": 900000}, f)  # ignored while the variable is set
-        for size, want in [(279999, "69%). Under 70%."), (280000, "70%). Getting big: map it soon with /tongs."),
-                           (339999, "84%). Getting big"), (340000, "85%). Map it with /tongs now, then compact.")]:
+        for size, want in [(256899, "69%). Under 70%."), (256900, "70%). Getting big: map it soon with /tongs."),
+                           (311949, "84%). Getting big"), (311950, "85%). Map it with /tongs now, then compact.")]:
             self.chat(self.folder_of(self.work), "a", [usage_line(84000), usage_line(size)])
-            _, out = self.run_it("--report", auto="400000")
-            self.assertIn(f"about {size:,} tokens (auto-compact at 400,000, {want}", out)
+            _, out = self.run_it("--report", auto="400000")  # auto-compacts at 367,000
+            self.assertIn(f"about {size:,} tokens (auto-compact at 367,000, {want}", out)
 
     def test_auto_compact_window_is_read_like_claude_code_reads_it(self):
         self.chat(self.folder_of(self.work), "a", [usage_line(150000)])
-        for value, want in [("500000", "auto-compact at 500,000"), ("500k", "auto-compact at 100,000"),
-                            ("2000000", "auto-compact at 1,000,000"), ("abc", "limit 400,000"), ("", "limit 400,000")]:
+        for value, want in [("500000", "auto-compact at 467,000"), ("500k", "auto-compact at 67,000"),
+                            ("2000000", "auto-compact at 967,000"), ("abc", "limit 400,000"), ("", "limit 400,000")]:
             _, out = self.run_it("--report", auto=value)
             self.assertIn(f"({want},", out, value)
 
     def test_limit_says_when_the_variable_overrides_it(self):
         _, out = self.run_it("--limit", "300k", auto="400000")
-        self.assertIn("CLAUDE_CODE_AUTO_COMPACT_WINDOW is set (400,000)", out)
+        self.assertIn("CLAUDE_CODE_AUTO_COMPACT_WINDOW is set, so the meter and /tongs size use where it auto-compacts (about 367,000)", out)
         _, out = self.run_it("--limit", "300k")
         self.assertNotIn("CLAUDE_CODE_AUTO_COMPACT_WINDOW", out)
 

@@ -11,6 +11,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG = os.path.join(HERE, "config.json")
 DEFAULT_LIMIT = 400000
 WARN_AT, DANGER_AT = 70, 85  # % of the limit, the same as the meter's orange and red
+AUTO_COMPACT_GAP = 33000  # Claude Code compacts about this far before its window (1M models: about 967k)
 PROJECTS = os.path.expanduser("~/.claude/projects")
 
 
@@ -77,10 +78,10 @@ def find_transcript():
 
 
 def auto_compact_window():
-    """Where Claude Code auto-compacts, read the way it reads it: a plain number kept between
-    100k and 1m ("500k" counts as 500, so 100k). None when the variable isn't set."""
+    """Where Claude Code auto-compacts: the window, read the way it reads it (a plain number kept
+    between 100k and 1m, so "500k" counts as 500, so 100k), less the gap. None when it isn't set."""
     m = re.match(r"\s*([+-]?\d+)", os.environ.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW", ""))
-    return min(1000000, max(100000, int(m.group(1)))) if m else None
+    return min(1000000, max(100000, int(m.group(1)))) - AUTO_COMPACT_GAP if m else None
 
 
 def parse_tokens(text):
@@ -107,7 +108,7 @@ def main():
         print(f"Limit changed: {limit:,} -> {new:,} tokens per message.")
         auto = auto_compact_window()
         if auto:
-            print(f"Note: CLAUDE_CODE_AUTO_COMPACT_WINDOW is set ({auto:,}), so the meter and /tongs size use that instead.")
+            print(f"Note: CLAUDE_CODE_AUTO_COMPACT_WINDOW is set, so the meter and /tongs size use where it auto-compacts (about {auto:,}) instead.")
         return 0
 
     if args[:1] == ["--report"]:

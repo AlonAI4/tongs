@@ -22,20 +22,21 @@ async function checkCases($: any, cases: readonly { size?: number; text: string;
   }
 }
 
-test('auto-compact at 400k: dim below 70%, orange from 280k (70%), red from 340k (85%), Compact from 70%', async ($, on) => {
+test('a 400k window auto-compacts at 367k: dim below 70%, orange from 256,900, red from 311,950, asks at 367,000', async ($, on) => {
   let tokens: number | undefined
   on('ui.render', ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> }) // the engine's empty band
   mock.env(on, { HOME, CLAUDE_CODE_AUTO_COMPACT_WINDOW: '400000' })
   on('fs.read', () => ({ value: '{"limit": 900000}' })) // ignored while the variable is set
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens, window: 1000000 }, rateLimits: [] } }))
   await checkCases($, [
-    { size: undefined, text: 'chat size shows after the first reply · auto-compact at 400k', color: undefined, compact: false },
-    { size: 120000, text: 'chat 120k / msg · auto-compact at 400k', color: undefined, compact: false },
-    { size: 279999, text: 'chat 280k / msg · auto-compact at 400k', color: undefined, compact: false },
-    { size: 280000, text: 'chat 280k / msg · auto-compact at 400k · 70%, map it soon with /tongs', color: 'warning', compact: true },
-    { size: 339999, text: 'chat 340k / msg · auto-compact at 400k · 84%, map it soon with /tongs', color: 'warning', compact: true },
-    { size: 340000, text: 'chat 340k / msg · auto-compact at 400k · 85%, run /tongs now', color: 'error', compact: true },
-    { size: 399000, text: 'chat 399k / msg · auto-compact at 400k · 99%, run /tongs now', color: 'error', compact: true },
+    { size: undefined, text: 'chat size shows after the first reply · auto-compact at 367k', color: undefined, compact: false },
+    { size: 120000, text: 'chat 120k / msg · auto-compact at 367k', color: undefined, compact: false },
+    { size: 256899, text: 'chat 257k / msg · auto-compact at 367k', color: undefined, compact: false },
+    { size: 256900, text: 'chat 257k / msg · auto-compact at 367k · 70%, map it soon with /tongs', color: 'warning', compact: true },
+    { size: 311949, text: 'chat 312k / msg · auto-compact at 367k · 84%, map it soon with /tongs', color: 'warning', compact: true },
+    { size: 311950, text: 'chat 312k / msg · auto-compact at 367k · 85%, run /tongs now', color: 'error', compact: true },
+    { size: 366999, text: 'chat 367k / msg · auto-compact at 367k · 99%, run /tongs now', color: 'error', compact: true },
+    { size: 367000, text: 'chat 367k / msg · auto-compact at 367k · 100%, do you want to compact?', color: 'error', compact: true },
   ], n => { tokens = n })
 })
 
@@ -85,17 +86,17 @@ test('at the limit it asks; Not now keeps Compact and waits until the chat is ba
 
 // Read like Claude Code reads it: a plain number from 100k to 1m, never past the model's window.
 for (const [value, window, shown] of [
-  ['500000', 1000000, 'auto-compact at 500k'], ['500k', 1000000, 'auto-compact at 100k'],
-  ['2000000', 1000000, 'auto-compact at 1000k'], ['400000', 200000, 'auto-compact at 200k'],
+  ['500000', 1000000, 'auto-compact at 467k'], ['500k', 1000000, 'auto-compact at 67k'],
+  ['2000000', 1000000, 'auto-compact at 967k'], ['400000', 200000, 'auto-compact at 167k'],
   ['abc', 1000000, 'limit 400k'], ['', 1000000, 'limit 400k'],
 ] as const) {
   test(`CLAUDE_CODE_AUTO_COMPACT_WINDOW="${value}" with a ${window} window shows "${shown}"`, async ($, on) => {
     on('ui.render', ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> })
     mock.env(on, { HOME, CLAUDE_CODE_AUTO_COMPACT_WINDOW: value })
     on('fs.read', () => ({ value: '{"limit": 400000}' }))
-    on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50000, window }, rateLimits: [] } }))
+    on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 10000, window }, rateLimits: [] } })) // small, so the line stays dim
     const ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'desktop', ...BAND })
-    expect((await ui.find({ type: 'Text', text: /chat/ }))?.text).toBe('chat 50k / msg · ' + shown)
+    expect((await ui.find({ type: 'Text', text: /chat/ }))?.text).toBe('chat 10k / msg · ' + shown)
     await ui.unmount()
   })
 }

@@ -13,6 +13,10 @@ import type { EngineInterface, Register } from 'claude-code'
 const DEFAULT_LIMIT = 400000
 const WARN_AT = 70 // % of the limit: orange, Compact button
 const DANGER_AT = 85 // %: red, run /tongs now
+// Claude Code auto-compacts about 33k before its window, leaving room for the reply and
+// the summary: a 400k window showed "38k until auto-compact" at 328.2k, and 1M models
+// compact at about 967k.
+const AUTO_COMPACT_GAP = 33000
 const FOCUS =
   "Keep the goal, the current task and its exact state, and the user's rules. " +
   'If TONGS-MAP.md exists in this folder, read it after compacting before re-reading any files.'
@@ -85,8 +89,8 @@ export const register: Register = on => {
     const { Box, Button, Text } = $.ui.resolve(e)
     const { max: wanted, label } = await getLimit($)
     const { tokens: size, window } = (await $.session.usage()).context
-    // Claude Code never waits past the model's own context window.
-    const max = label === 'limit' || !window ? wanted : Math.min(wanted, window)
+    // Claude Code never waits past the model's own context window, and stops a little before it.
+    const max = label === 'limit' ? wanted : Math.min(wanted, window || wanted) - AUTO_COMPACT_GAP
     const at = label + ' ' + k(max)
     const pct = size === undefined ? 0 : Math.floor((size * 100) / max) // never rounds up into the next colour
     const isBig = size !== undefined && pct >= WARN_AT
