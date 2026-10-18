@@ -110,6 +110,8 @@ test('Compact runs the /compact compaction with the Tongs focus, and says when i
   on('fs.read', () => ({ value: '{"limit": 400000}' }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 300000, window: 1000000 }, rateLimits: [] } }))
   on('ui.toast', ($, e) => { toasts.push(e.text); return { value: undefined } })
+  on('session.cwd', () => ({ value: '/Users/test/game' }))
+  on('fs.exists', ($, e) => ({ value: e.path === '/Users/test/game/TONGS-MAP.md' }))
   on('session.compact', ($, e) => {
     if (isBusy) throw new Error('a turn is running')
     compacts.push(e.instructions)
@@ -119,7 +121,7 @@ test('Compact runs the /compact compaction with the Tongs focus, and says when i
   const ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
   await ui.press({ key: 'compact' })
   expect(compacts).toEqual([
-    "Keep the goal, the current task and its exact state, and the user's rules. If TONGS-MAP.md exists in this folder, read it after compacting before re-reading any files.",
+    "Keep the goal, the current task and its exact state, and the user's rules. Full details are in TONGS-MAP.md in this folder: read it after compacting before re-reading any files.",
   ])
   expect(toasts.at(-1)).toBe('Compacted. 300k -> 40k. The meter updates after your next message.')
 
@@ -150,6 +152,21 @@ for (const [file, shown] of [
   })
 }
 
+test('without a TONGS-MAP.md in the folder, Compact leaves the map sentence out', async ($, on) => {
+  const compacts: (string | undefined)[] = []
+  on('ui.render', ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> })
+  mock.env(on, { HOME })
+  on('fs.read', () => ({ value: '{"limit": 400000}' }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 300000, window: 1000000 }, rateLimits: [] } }))
+  on('session.cwd', () => ({ value: '/Users/test/game' }))
+  on('fs.exists', () => ({ value: false }))
+  on('session.compact', ($, e) => { compacts.push(e.instructions); return { messages: [], tokensBefore: 300000, tokensAfter: 40000 } })
+  const ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
+  await ui.press({ key: 'compact' })
+  expect(compacts).toEqual(["Keep the goal, the current task and its exact state, and the user's rules."])
+  await ui.unmount()
+})
+
 test('when compaction is skipped, the meter says why', async ($, on) => {
   const toasts: string[] = []
   on('ui.render', ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> })
@@ -173,4 +190,23 @@ test('the meter steps aside while a survey is showing', async ($, on) => {
   expect(await ui.find({ key: 'compact' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /chat/ })).toBeUndefined()
   await ui.unmount()
+})
+
+test('auto-compact gets the Tongs focus; a typed /compact and subagents keep their own', async ($, on) => {
+  const MSGS = [{ role: 'user', text: 'hi', toolUses: [] }] as const
+  const seen: (string | undefined)[] = []
+  const toasts: string[] = []
+  on('ui.toast', ($, e) => { toasts.push(e.text); return { value: undefined } })
+  on('session.cwd', () => ({ value: '/Users/test/game' }))
+  on('fs.exists', ($, e) => ({ value: e.path === '/Users/test/game/TONGS-MAP.md' }))
+  on('session.compact', ($, e) => { seen.push(e.instructions); return { messages: MSGS } })
+  await $.session.compact({ trigger: 'auto', messages: MSGS })
+  await $.session.compact({ trigger: 'precompute', messages: MSGS })
+  await $.session.compact({ trigger: 'manual', messages: MSGS })
+  await $.session.compact({ trigger: 'manual', instructions: 'keep the CSS', messages: MSGS })
+  await $.session.compact({ trigger: 'auto', instructions: 'from another mod', messages: MSGS })
+  await $.session.compact({ trigger: 'auto', agentId: 'sub-1', messages: MSGS })
+  const full = "Keep the goal, the current task and its exact state, and the user's rules. Full details are in TONGS-MAP.md in this folder: read it after compacting before re-reading any files."
+  expect(seen).toEqual([full, full, undefined, 'keep the CSS', 'from another mod', undefined])
+  expect(toasts).toEqual(['Auto-compacting with the Tongs focus.'])
 })

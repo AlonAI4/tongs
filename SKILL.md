@@ -35,7 +35,7 @@ Pick the mode from the argument. No argument = **compact** (the default).
 3. **Draw it.** Write the same map as JSON (format at the top of `scripts/draw-map.mjs`) to `~/.claude/tongs-maps/<folder-name>.json` (`<folder-name>` = the last part of the current folder's path in lowercase letters, digits and dashes, e.g. `my-game`), then run `node ~/.claude/skills/tongs/scripts/draw-map.mjs ~/.claude/tongs-maps/<folder-name>.json --serve` (it makes sure a small local server on 127.0.0.1:4747 serves the maps and prints the map's `http://localhost:4747/...` URL). Show it in the app's browser pane next to the chat: `mcp__Claude_Browser__preview_start` with `{ "url": "<that URL>" }` (the pane refuses `file://` pages, so never pass a file path). Only if that tool doesn't exist (the terminal), run it again without `--serve` to open it in the system browser.
 4. **The /compact line.** Claude can't run `/compact` itself, so give the user one line to type, in a code block:
    `/compact Keep the goal, the current task and its exact state, and the user's rules. Full details are in <path>/TONGS-MAP.md: read it after compacting before re-reading any files.`
-   Fill in the current task in a few words. (If the Tongs meter mod is on, its Compact button, shown from 70% of the limit, runs the same compaction with a general focus; the typed line is better because it names the task.)
+   Fill in the current task in a few words. (If the Tongs meter mod is on, its Compact button, shown from 70% of the limit, and Claude Code's own auto-compact both use this line without the task; the typed line is better because it names the task.)
 
 ## sendoff
 
