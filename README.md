@@ -22,15 +22,15 @@ Claude doesn't remember a chat. On every message it re-reads all of it: your set
 | | What it does |
 |---|---|
 | `/tongs` | Shows the chat's size, writes `TONGS-MAP.md` (goal, files, decisions, rules, done, now, open questions, gotchas), draws it as a graph, and gives you the `/compact` line to type. |
-| Meter (optional mod) | A line above the prompt: `chat 316k / msg · limit 400k · 79%, getting big`. Dim when small, orange with a **Compact** button from 60% of the limit, red over it. |
+| Meter (optional mod) | A line above the prompt: `chat 316k / msg · auto-compact at 400k · 79%, map it soon with /tongs`. It measures against Claude Code's auto-compact window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`) when you set one, otherwise the Tongs limit. Dim when small, orange with a **Compact** button from 70%, red from 85%: time to run `/tongs` before auto-compact squashes the chat without a map. |
 | `/tongs sendoff` | Only if you want a fresh chat: the map plus a paste-ready first prompt. |
 | `/tongs size` | Just the size, and what it means. |
-| `/tongs limit 500k` | Changes the limit (default 400k tokens per message, from 10k to 1m). The meter uses it too. |
+| `/tongs limit 500k` | Changes the limit (default 400k tokens per message, from 10k to 1m). The meter uses it too, unless `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is set. |
 | `/tongs scan` | A read-only look at what your setup sends with every message (skills, plugins, MCP servers, connectors, memory files) and what you could switch off. Changes nothing unless you say yes. |
 
 ## Quick start
 
-You need Claude Code, Python 3 and Node 20 or newer. Built and tested on macOS (Node 26, Python 3.14); the GitHub test workflow is set up to also test Linux and Node 20 and 22. Windows is untested.
+You need Claude Code, Python 3 and Node 20 or newer. Built and tested on macOS (Node 24 and 26, Python 3.14); the GitHub test workflow is set up to also test Linux and Node 20 and 22. Windows is untested.
 
 **1. Download it:**
 
@@ -94,7 +94,7 @@ Left behind, if you want them gone too: the drawn maps in `~/.claude/tongs-maps`
 ## Tests
 
 ```bash
-cd ~/tongs && python3 -m unittest discover -s tests && node --test tests/
+cd ~/tongs && python3 -m unittest discover -s tests && node --test tests/*.test.mjs
 ```
 
 The meter has its own tests, run by Claude Code: `claude plugin test ~/tongs/meter`. See [What was tested](#what-was-tested) for what they prove.
@@ -103,11 +103,11 @@ The meter has its own tests, run by Claude Code: `claude plugin test ~/tongs/met
 
 | Suite | Checks | What it proves |
 |---|---|---|
-| `tests/test_detector.py` | 13 | Right numbers from real-shaped chat files: subagent replies and broken lines ignored, the exact chat found by session id, odd session ids can't reach other folders, a 20 MB chat measured in under 3 seconds, bad limits (`abc`, `5k`, `2m`) refused without touching the settings. |
+| `tests/test_detector.py` | 16 | Right numbers from real-shaped chat files: subagent replies and broken lines ignored, the exact chat found by session id, odd session ids can't reach other folders, a 20 MB chat measured in under 3 seconds, bad limits (`abc`, `5k`, `2m`) refused without touching the settings, and the auto-compact window read the way Claude Code reads it, with the same 70% and 85% as the meter. |
 | `tests/maps.test.mjs` | 11 | Maps draw and copy to `latest.html`; chat text full of `<script>`, `<img onerror>`, `$&` and template markers can't break out of the page and comes back exactly; 11 kinds of broken map give clear errors; the server serves only plain `.html` maps, only to localhost, only on 127.0.0.1, and refuses `../` tricks, symlinks, other hosts and other methods. |
-| `meter/tests/band.test.tsx` | 10 | The meter's text, colour and button at each size, the limit from `config.json` (missing or broken = 400k), the Compact focus text, skipped and failed compactions, and stepping aside for surveys. |
+| `meter/tests/band.test.tsx` | 17 | The meter's text, colour and button at the exact sizes where they change (279,999 dim, 280,000 orange, 339,999 orange, 340,000 red for a 400k window), the auto-compact window (`500k` counts as 100k, like Claude Code; never past the model's window), the limit from `config.json` when it isn't set (missing or broken = 400k), the Compact focus text, skipped and failed compactions, and stepping aside for surveys. |
 
-**Do the tests catch bugs?** 16 bugs were put into the code on purpose (counting subagent replies, accepting any session id, dropping the host check, listening on the network, following symlinks, not escaping `<`, and more). The tests caught all 16.
+**Do the tests catch bugs?** 20 bugs were put into the code on purpose (counting subagent replies, accepting any session id, dropping the host check, listening on the network, following symlinks, not escaping `<`, turning orange or red one percent off, rounding a percentage up, ignoring the auto-compact window, and more). The tests caught all 20.
 
 **Bugs the testing found and fixed:** a map whose title contained a template marker broke its page; a map opened in a hidden pane was drawn into a 1×1 box; maps were squashed on phones and in the app's narrow side pane; folder names with spaces couldn't be served; a bad `--limit` crashed; and `/tongs size` could measure an old chat.
 

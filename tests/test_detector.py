@@ -33,10 +33,12 @@ class Detector(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp)
 
-    def run_it(self, *args, cwd=None, sid=None):
-        env = {"HOME": self.home}  # nothing else, so no real session id
+    def run_it(self, *args, cwd=None, sid=None, auto=None):
+        env = {"HOME": self.home}  # nothing else, so no real session id or auto-compact window
         if sid is not None:
             env["CLAUDE_CODE_SESSION_ID"] = sid
+        if auto is not None:
+            env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = auto
         out, here = io.StringIO(), os.getcwd()
         os.chdir(cwd or self.work)
         try:
@@ -83,14 +85,14 @@ class Detector(unittest.TestCase):
         ])
         code, out = self.run_it("--report")
         self.assertEqual(code, 0)
-        self.assertIn("about 150,000 tokens (limit 400,000). Under the limit.", out)
+        self.assertIn("about 150,000 tokens (limit 400,000, 37%). Under 70%.", out)
         self.assertIn("Setup (first message): about 84,000. This chat added: about 66,000.", out)
         self.assertIn("(newest chat in this folder)", out)
 
     def test_over_the_limit(self):
         self.chat(self.folder_of(self.work), "a", [usage_line(90000), usage_line(420000)])
         _, out = self.run_it("--report")
-        self.assertIn("Over the limit: map it with /tongs, then compact.", out)
+        self.assertIn("(limit 400,000, 105%). Map it with /tongs now, then compact.", out)
 
     def test_exact_chat_by_session_id_from_any_folder(self):
         self.chat(self.folder_of(self.work), "newer", [usage_line(300000)])
@@ -140,7 +142,7 @@ class Detector(unittest.TestCase):
                 f.write(bad)
             code, out = self.run_it("--report")
             self.assertEqual(code, 0, bad)
-            self.assertIn("(limit 400,000)", out, bad)
+            self.assertIn("(limit 400,000, 25%)", out, bad)
 
     # ---------- --limit ----------
     def test_limit_formats(self):
@@ -168,7 +170,30 @@ class Detector(unittest.TestCase):
         self.assertEqual(self.config(), {"limit": 200000, "other": True})
         self.chat(self.folder_of(self.work), "a", [usage_line(250000)])
         _, out = self.run_it("--report")
-        self.assertIn("(limit 200,000). Over the limit", out)
+        self.assertIn("(limit 200,000, 125%). Map it with /tongs now", out)
+
+    # ---------- CLAUDE_CODE_AUTO_COMPACT_WINDOW ----------
+    def test_auto_compact_window_wins_with_the_meters_70_and_85(self):
+        with open(os.path.join(self.skill, "config.json"), "w") as f:
+            json.dump({"limit": 900000}, f)  # ignored while the variable is set
+        for size, want in [(279999, "69%). Under 70%."), (280000, "70%). Getting big: map it soon with /tongs."),
+                           (339999, "84%). Getting big"), (340000, "85%). Map it with /tongs now, then compact.")]:
+            self.chat(self.folder_of(self.work), "a", [usage_line(84000), usage_line(size)])
+            _, out = self.run_it("--report", auto="400000")
+            self.assertIn(f"about {size:,} tokens (auto-compact at 400,000, {want}", out)
+
+    def test_auto_compact_window_is_read_like_claude_code_reads_it(self):
+        self.chat(self.folder_of(self.work), "a", [usage_line(150000)])
+        for value, want in [("500000", "auto-compact at 500,000"), ("500k", "auto-compact at 100,000"),
+                            ("2000000", "auto-compact at 1,000,000"), ("abc", "limit 400,000"), ("", "limit 400,000")]:
+            _, out = self.run_it("--report", auto=value)
+            self.assertIn(f"({want},", out, value)
+
+    def test_limit_says_when_the_variable_overrides_it(self):
+        _, out = self.run_it("--limit", "300k", auto="400000")
+        self.assertIn("CLAUDE_CODE_AUTO_COMPACT_WINDOW is set (400,000)", out)
+        _, out = self.run_it("--limit", "300k")
+        self.assertNotIn("CLAUDE_CODE_AUTO_COMPACT_WINDOW", out)
 
     def test_no_arguments_prints_help(self):
         code, out = self.run_it()

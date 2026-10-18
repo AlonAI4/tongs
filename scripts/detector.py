@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Chat-size detector for the Tongs skill. Read-only, except config.json for --limit.
 
-  --report      how many tokens this chat's last message re-read, and how much of that is setup
+  --report      how many tokens this chat's last message re-read, and how much of that is setup,
+                against CLAUDE_CODE_AUTO_COMPACT_WINDOW when it is set, else the Tongs limit
   --limit N     change the limit (500000, 500,000, 500k or 0.5m); the Tongs meter reads it too
 """
 import glob, json, os, re, sys
@@ -9,6 +10,7 @@ import glob, json, os, re, sys
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG = os.path.join(HERE, "config.json")
 DEFAULT_LIMIT = 400000
+WARN_AT, DANGER_AT = 70, 85  # % of the limit, the same as the meter's orange and red
 PROJECTS = os.path.expanduser("~/.claude/projects")
 
 
@@ -74,6 +76,13 @@ def find_transcript():
     return None, "no chat found"
 
 
+def auto_compact_window():
+    """Where Claude Code auto-compacts, read the way it reads it: a plain number kept between
+    100k and 1m ("500k" counts as 500, so 100k). None when the variable isn't set."""
+    m = re.match(r"\s*([+-]?\d+)", os.environ.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW", ""))
+    return min(1000000, max(100000, int(m.group(1)))) if m else None
+
+
 def parse_tokens(text):
     """500000, 500,000, 500k, 0.5m -> 500000. None if it isn't a sensible limit."""
     m = re.fullmatch(r"(\d+(?:\.\d+)?)([km]?)", text.strip().lower().replace(",", "").replace("_", ""))
@@ -96,6 +105,9 @@ def main():
         with open(CONFIG, "w") as f:
             json.dump({**config, "limit": new}, f)
         print(f"Limit changed: {limit:,} -> {new:,} tokens per message.")
+        auto = auto_compact_window()
+        if auto:
+            print(f"Note: CLAUDE_CODE_AUTO_COMPACT_WINDOW is set ({auto:,}), so the meter and /tongs size use that instead.")
         return 0
 
     if args[:1] == ["--report"]:
@@ -104,8 +116,12 @@ def main():
             print("No chat found yet: the size shows after Claude's first reply.")
             return 0
         size, base = last_size(path), first_size(path)
-        print(f"Last message re-read about {size:,} tokens (limit {limit:,}). "
-              + ("Over the limit: map it with /tongs, then compact." if size > limit else "Under the limit.")
+        auto = auto_compact_window()
+        mark, at = (auto, f"auto-compact at {auto:,}") if auto else (limit, f"limit {limit:,}")
+        pct = size * 100 // mark
+        print(f"Last message re-read about {size:,} tokens ({at}, {pct}%). "
+              + ("Map it with /tongs now, then compact." if pct >= DANGER_AT
+                 else "Getting big: map it soon with /tongs." if pct >= WARN_AT else "Under 70%.")
               + ("" if how == "this chat" else f" ({how})"))
         print(f"Setup (first message): about {base:,}. This chat added: about {max(0, size - base):,}.")
         return 0

@@ -1,29 +1,39 @@
 // Tongs meter: a line above the prompt showing how big the chat is, i.e. how many
-// tokens each new message re-reads, against the Tongs limit (tongs/config.json).
-// From 60% of the limit it also shows a Compact button: the same compaction
-// /compact runs, told to keep the important parts.
+// tokens each new message re-reads, against where Claude Code auto-compacts
+// (CLAUDE_CODE_AUTO_COMPACT_WINDOW) or, when that isn't set, the Tongs limit
+// (tongs/config.json). Orange from 70%, red from 85%: time to run /tongs and save
+// the map before auto-compact squashes the chat without one. Both show a Compact
+// button: the same compaction /compact runs, told to keep the important parts.
 // The size is the engine's own figure ($.session.usage(), free to call), redrawn
 // after each reply. The meter never sends a prompt or starts a Claude turn.
 import type { EngineInterface, Register } from 'claude-code'
 
 const DEFAULT_LIMIT = 400000
-const WARN_AT = 0.6 // orange + Compact button from 60% of the limit
+const WARN_AT = 70 // % of the limit: orange, Compact button
+const DANGER_AT = 85 // %: red, run /tongs now
 const FOCUS =
   "Keep the goal, the current task and its exact state, and the user's rules. " +
   'If TONGS-MAP.md exists in this folder, read it after compacting before re-reading any files.'
 
 const k = (n: number) => Math.round(n / 1000) + 'k'
 
-let limit: number | undefined // cached; re-read after each reply
+type Limit = { max: number; label: string }
+let limit: Limit | undefined // cached; re-read after each reply
 
-async function getLimit($: EngineInterface): Promise<number> {
+async function getLimit($: EngineInterface): Promise<Limit> {
   if (limit === undefined) {
-    let n: unknown
-    try {
-      const home = await $.env.get('HOME')
-      n = JSON.parse(await $.fs.read(`${home}/.claude/skills/tongs/config.json`)).limit
-    } catch {} // no config: use the default
-    limit = typeof n === 'number' && n > 0 ? n : DEFAULT_LIMIT
+    // Read the way Claude Code reads it: a plain number, kept between 100k and 1m
+    // ("500k" counts as 500, so 100k).
+    const auto = parseInt((await $.env.get('CLAUDE_CODE_AUTO_COMPACT_WINDOW')) ?? '', 10)
+    if (Number.isFinite(auto)) limit = { max: Math.min(1000000, Math.max(100000, auto)), label: 'auto-compact at' }
+    else {
+      let n: unknown
+      try {
+        const home = await $.env.get('HOME')
+        n = JSON.parse(await $.fs.read(`${home}/.claude/skills/tongs/config.json`)).limit
+      } catch {} // no config: use the default
+      limit = { max: typeof n === 'number' && n > 0 ? n : DEFAULT_LIMIT, label: 'limit' }
+    }
   }
   return limit
 }
@@ -70,16 +80,20 @@ export const register: Register = on => {
     const below = await next(e) // keep whatever else draws here
     if (e.props.hasSurvey) return below
     const { Box, Button, Text } = $.ui.resolve(e)
-    const max = await getLimit($)
-    const size = (await $.session.usage()).context.tokens
-    const isBig = size !== undefined && size >= max * WARN_AT
+    const { max: wanted, label } = await getLimit($)
+    const { tokens: size, window } = (await $.session.usage()).context
+    // Claude Code never waits past the model's own context window.
+    const max = label === 'limit' || !window ? wanted : Math.min(wanted, window)
+    const at = label + ' ' + k(max)
+    const pct = size === undefined ? 0 : Math.floor((size * 100) / max) // never rounds up into the next colour
+    const isBig = size !== undefined && pct >= WARN_AT
 
     // Colour AND words, so it never relies on colour alone.
     let line
-    if (size === undefined) line = <Text dimColor>chat size shows after the first reply · limit {k(max)}</Text>
-    else if (size > max) line = <Text color="error" bold>chat {k(size)} / msg · OVER limit {k(max)}</Text>
-    else if (isBig) line = <Text color="warning">chat {k(size)} / msg · limit {k(max)} · {Math.round((size / max) * 100)}%, getting big</Text>
-    else line = <Text dimColor>chat {k(size)} / msg · limit {k(max)}</Text>
+    if (size === undefined) line = <Text dimColor>chat size shows after the first reply · {at}</Text>
+    else if (pct >= DANGER_AT) line = <Text color="error" bold>chat {k(size)} / msg · {at} · {pct}%, run /tongs now</Text>
+    else if (isBig) line = <Text color="warning">chat {k(size)} / msg · {at} · {pct}%, map it soon with /tongs</Text>
+    else line = <Text dimColor>chat {k(size)} / msg · {at}</Text>
 
     return (
       <Box flexDirection="column">

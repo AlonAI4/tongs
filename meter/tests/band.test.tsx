@@ -7,23 +7,11 @@ const BAND = {
   props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 80, scroll: { offset: 0, bodyRows: 10 }, view: {} },
 } as const
 
-test('meter text and colour at low, 60% and over the limit; Compact only from 60%', async ($, on) => {
-  let tokens: number | undefined
-  on('ui.render', ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> }) // the engine's empty band
-  mock.env(on, { HOME })
-  on('fs.read', ($, e) => ({ value: e.path === CONFIG ? '{"limit": 400000}' : '' }))
-  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens, window: 1000000 }, rateLimits: [] } }))
-
-  const cases = [
-    { size: undefined, text: 'chat size shows after the first reply · limit 400k', color: undefined, compact: false },
-    { size: 120000, text: 'chat 120k / msg · limit 400k', color: undefined, compact: false },
-    { size: 239000, text: 'chat 239k / msg · limit 400k', color: undefined, compact: false },
-    { size: 240000, text: 'chat 240k / msg · limit 400k · 60%, getting big', color: 'warning', compact: true },
-    { size: 420000, text: 'chat 420k / msg · OVER limit 400k', color: 'error', compact: true },
-  ]
+// Each case: tokens re-read, the line shown, its colour, whether Compact shows.
+async function checkCases($: any, cases: readonly { size?: number; text: string; color?: string; compact: boolean }[], setTokens: (n?: number) => void) {
   for (const surface of ['terminal', 'desktop'] as const) {
     for (const c of cases) {
-      tokens = c.size
+      setTokens(c.size)
       const ui = await $.ui.mount({ plugin: 'tongs-meter', surface, ...BAND })
       const line = await ui.find({ type: 'Text', text: c.text })
       expect(line).toBeDefined()
@@ -32,7 +20,56 @@ test('meter text and colour at low, 60% and over the limit; Compact only from 60
       await ui.unmount()
     }
   }
+}
+
+test('auto-compact at 400k: dim below 70%, orange from 280k (70%), red from 340k (85%), Compact from 70%', async ($, on) => {
+  let tokens: number | undefined
+  on('ui.render', ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> }) // the engine's empty band
+  mock.env(on, { HOME, CLAUDE_CODE_AUTO_COMPACT_WINDOW: '400000' })
+  on('fs.read', () => ({ value: '{"limit": 900000}' })) // ignored while the variable is set
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens, window: 1000000 }, rateLimits: [] } }))
+  await checkCases($, [
+    { size: undefined, text: 'chat size shows after the first reply · auto-compact at 400k', color: undefined, compact: false },
+    { size: 120000, text: 'chat 120k / msg · auto-compact at 400k', color: undefined, compact: false },
+    { size: 279999, text: 'chat 280k / msg · auto-compact at 400k', color: undefined, compact: false },
+    { size: 280000, text: 'chat 280k / msg · auto-compact at 400k · 70%, map it soon with /tongs', color: 'warning', compact: true },
+    { size: 339999, text: 'chat 340k / msg · auto-compact at 400k · 84%, map it soon with /tongs', color: 'warning', compact: true },
+    { size: 340000, text: 'chat 340k / msg · auto-compact at 400k · 85%, run /tongs now', color: 'error', compact: true },
+    { size: 399000, text: 'chat 399k / msg · auto-compact at 400k · 99%, run /tongs now', color: 'error', compact: true },
+  ], n => { tokens = n })
 })
+
+test('without the variable, config.json "limit" is used, with the same 70% and 85%', async ($, on) => {
+  let tokens: number | undefined
+  on('ui.render', ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> })
+  mock.env(on, { HOME })
+  on('fs.read', ($, e) => ({ value: e.path === CONFIG ? '{"limit": 200000}' : '' }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens, window: 1000000 }, rateLimits: [] } }))
+  await checkCases($, [
+    { size: 139999, text: 'chat 140k / msg · limit 200k', color: undefined, compact: false },
+    { size: 140000, text: 'chat 140k / msg · limit 200k · 70%, map it soon with /tongs', color: 'warning', compact: true },
+    { size: 169999, text: 'chat 170k / msg · limit 200k · 84%, map it soon with /tongs', color: 'warning', compact: true },
+    { size: 170000, text: 'chat 170k / msg · limit 200k · 85%, run /tongs now', color: 'error', compact: true },
+    { size: 250000, text: 'chat 250k / msg · limit 200k · 125%, run /tongs now', color: 'error', compact: true },
+  ], n => { tokens = n })
+})
+
+// Read like Claude Code reads it: a plain number from 100k to 1m, never past the model's window.
+for (const [value, window, shown] of [
+  ['500000', 1000000, 'auto-compact at 500k'], ['500k', 1000000, 'auto-compact at 100k'],
+  ['2000000', 1000000, 'auto-compact at 1000k'], ['400000', 200000, 'auto-compact at 200k'],
+  ['abc', 1000000, 'limit 400k'], ['', 1000000, 'limit 400k'],
+] as const) {
+  test(`CLAUDE_CODE_AUTO_COMPACT_WINDOW="${value}" with a ${window} window shows "${shown}"`, async ($, on) => {
+    on('ui.render', ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> })
+    mock.env(on, { HOME, CLAUDE_CODE_AUTO_COMPACT_WINDOW: value })
+    on('fs.read', () => ({ value: '{"limit": 400000}' }))
+    on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 50000, window }, rateLimits: [] } }))
+    const ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'desktop', ...BAND })
+    expect((await ui.find({ type: 'Text', text: /chat/ }))?.text).toBe('chat 50k / msg · ' + shown)
+    await ui.unmount()
+  })
+}
 
 test('Compact runs the /compact compaction with the Tongs focus, and says when it cannot', async ($, on) => {
   const compacts: (string | undefined)[] = []
@@ -67,7 +104,7 @@ test('Compact runs the /compact compaction with the Tongs focus, and says when i
 // One test per file contents: the meter keeps the limit until the next reply, so each needs a fresh start.
 for (const [file, shown] of [
   [undefined, 'limit 400k'], ['{not json', 'limit 400k'], ['{"limit": "500k"}', 'limit 400k'],
-  ['{"limit": -5}', 'limit 400k'], ['{"limit": 500000}', 'limit 500k'], ['{"limit": 150000}', '67%, getting big'],
+  ['{"limit": -5}', 'limit 400k'], ['{"limit": 500000}', 'limit 500k'], ['{"limit": 120000}', '83%, map it soon'],
 ] as const) {
   test(`config ${file ?? '(missing)'} shows "${shown}"`, async ($, on) => {
     on('ui.render', ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> })
