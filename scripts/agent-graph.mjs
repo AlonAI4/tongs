@@ -73,13 +73,19 @@ export function projectOf(cwd, home) {
   return { name: first, root: join(home, ...parts.slice(0, i + 1)) };
 }
 
-export function folderOf(p, root) {
-  if (typeof p !== "string" || !root) return "shared";
-  const rel = relative(root, p);
-  if (!rel || rel === ".." || rel.startsWith(".." + sep)) return "shared";
+// Where a file lives: { project, folder }. Files outside your home folder or inside ~/.claude are
+// "scratch" in the agent's own project. A file in another project keeps that project, which is how
+// the graph shows projects touching each other.
+export function placeOf(p, own, home) {
+  if (typeof p !== "string") return null;
+  if (!p.startsWith(home + sep) || p.startsWith(join(home, ".claude") + sep)) return { project: own, folder: "scratch" };
+  const pr = projectOf(p, home);
+  if (!pr.root) return { project: own, folder: "scratch" };
+  const rel = relative(pr.root, p);
+  if (!rel || rel === ".." || rel.startsWith(".." + sep)) return { project: pr.name, folder: "(project root)" };
   const parts = rel.split(sep);
   // One name with a dot (CLAUDE.md) is a file in the project root; one without (scripts) is a folder, e.g. a Grep path.
-  return parts.length === 1 && parts[0].includes(".") ? "(project root)" : parts[0];
+  return { project: pr.name, folder: parts.length === 1 && parts[0].includes(".") ? "(project root)" : parts[0] };
 }
 
 export function modelName(m) {
@@ -103,7 +109,7 @@ export async function readLogs(logsDir, { days = 14, home = homedir() } = {}) {
     const key = rel.join("/");
     const agent = {
       id: "a" + hash(key), parentKey: null,
-      sub, project: null, root: null, fresh: 0, cached: 0, models: new Map(), folders: new Map(), tools: new Set(),
+      sub, project: null, fresh: 0, cached: 0, models: new Map(), folders: new Map(), tools: new Set(),
     };
     // a subagent's parent chat file sits next to its folder: <proj>/<session>.jsonl
     if (sub) agent.parentKey = "a" + hash(rel.slice(0, -3).concat(session + ".jsonl").join("/"));
@@ -119,14 +125,15 @@ export async function readLogs(logsDir, { days = 14, home = homedir() } = {}) {
       if (!m || m.role !== "assistant") continue;
       if (!agent.project && typeof d.cwd === "string") {
         const p = projectOf(d.cwd, home);
-        agent.project = p.name; agent.root = p.root;
+        agent.project = p.name;
       }
       for (const b of Array.isArray(m.content) ? m.content : []) {
         if (!b || b.type !== "tool_use" || !b.input || agent.tools.has(b.id)) continue;
         agent.tools.add(b.id);
         const path = PATH_KEYS.map(k => b.input[k]).find(v => typeof v === "string");
         if (path) {
-          const f = folderOf(path, agent.root);
+          const w = placeOf(path, agent.project || "other", home);
+          const f = w.project + "\t" + w.folder;
           agent.folders.set(f, (agent.folders.get(f) || 0) + 1);
         }
       }
@@ -146,72 +153,82 @@ export async function readLogs(logsDir, { days = 14, home = homedir() } = {}) {
 }
 
 // ---------------------------------------------------------------- building the graph
+const byCount = (x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1);
+
 export function buildGraph(agents) {
   // projects ranked by fresh tokens; the smallest are merged into "other"
   const total = new Map();
   for (const a of agents) total.set(a.project || "other", (total.get(a.project || "other") || 0) + a.fresh);
   const ranked = [...total.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(e => e[0]);
   const keep = new Set(ranked.filter(p => p !== "other").slice(0, LIMITS.projects - 1));
+  const shownName = p => (keep.has(p) ? p : "other");
   const byId = new Map(agents.map(a => [a.id, a]));
   // A subagent sits in its parent chat's project, so dashed parent lines never cross projects.
   const projectName = a => {
     const parent = a.sub && byId.get(a.parentKey);
-    const p = parent ? parent.project : a.project;
-    return keep.has(p) ? p : "other";
+    return shownName(parent ? parent.project : a.project);
   };
 
   const sorted = [...agents].sort((a, b) => b.fresh - a.fresh || (a.id < b.id ? -1 : 1));
-  const perProject = new Map();
-  const shown = [];
-  const folded = new Map();
+  const perProject = new Map(), shown = [], folded = new Map();
   for (const a of sorted) {
-    const p = projectName(a);
-    const c = perProject.get(p) || 0;
+    const p = projectName(a), c = perProject.get(p) || 0;
     if (c < LIMITS.agentsPerProject && shown.length < LIMITS.agentsTotal) { perProject.set(p, c + 1); shown.push(a); }
     else { const f = folded.get(p) || { n: 0, fresh: 0, cached: 0 }; f.n++; f.fresh += a.fresh; f.cached += a.cached; folded.set(p, f); }
   }
   const shownIds = new Set(shown.map(a => a.id));
-
   const projects = [...new Set([...shown.map(projectName), ...folded.keys()])].sort((a, b) =>
     (total.get(b) || 0) - (total.get(a) || 0) || (a < b ? -1 : 1));
 
-  const nodes = [], links = [];
+  // each agent's folders as { project (as shown), folder, n }: own project first, the rest are crossings
+  const placesOf = a => {
+    const own = projectName(a);
+    const all = [...a.folders.entries()].sort(byCount).map(([k, n]) => { const [pr, folder] = k.split("\t"); return { project: shownName(pr), folder, n }; });
+    const mine = all.filter(f => f.project === own).slice(0, LIMITS.foldersPerAgent);
+    const cross = all.filter(f => f.project !== own && projects.includes(f.project)).slice(0, LIMITS.foldersPerAgent);
+    return { own, mine: mine.length ? mine : [{ project: own, folder: "(no file calls)", n: 1 }], cross };
+  };
+  const places = new Map(shown.map(a => [a.id, placesOf(a)]));
+
+  const nodes = [], links = [], bridge = new Map();
   const maxFresh = Math.max(1, ...shown.map(a => a.fresh));
-  const cols = Math.min(projects.length, 3);
-  const CELL = 520;
+  const cols = Math.min(projects.length, 3), CELL = 520;
+  const fid = (p, f) => `f:${p}:${f}`;
 
   projects.forEach((p, pi) => {
     const cx = (pi % cols) * CELL + CELL / 2, cy = Math.floor(pi / cols) * CELL + CELL / 2;
     const mine = shown.filter(a => projectName(a) === p);
-    const top = a => {
-      const fs = [...a.folders.entries()].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1)).slice(0, LIMITS.foldersPerAgent);
-      return fs.length ? fs : [["(no file calls)", 1]];
-    };
-    const folderNames = [...new Set(mine.flatMap(a => top(a).map(f => f[0])))].sort();
-    const fAngle = new Map(folderNames.map((f, i) => [f, (i / Math.max(1, folderNames.length)) * 2 * Math.PI - Math.PI / 2]));
-    nodes.push({ id: "p:" + p, type: "project", label: p, x: cx, y: cy, r: 22, detail: `${mine.length} agents shown` });
+    // folders in this project's ring: its agents' own folders, and where other projects' agents reach in
+    const names = new Set();
+    for (const a of shown) { const pl = places.get(a.id); if (pl.own === p) pl.mine.forEach(f => names.add(f.folder)); pl.cross.forEach(f => { if (f.project === p) names.add(f.folder); }); }
+    const folderNames = [...names].sort();
+    const ang = new Map(folderNames.map((f, i) => [f, (i / Math.max(1, folderNames.length)) * 2 * Math.PI - Math.PI / 2]));
+    nodes.push({ id: "p:" + p, type: "project", label: p, x: cx, y: cy, r: 24, detail: `${mine.length} agents shown` });
     for (const f of folderNames) {
-      const ang = fAngle.get(f);
-      nodes.push({ id: `f:${p}:${f}`, type: "folder", label: f, x: Math.round(cx + 105 * Math.cos(ang)), y: Math.round(cy + 105 * Math.sin(ang)), r: 9,
-        detail: f === "shared" ? "Files outside this project: where projects meet." : "Folder inside the project" });
-      links.push({ from: "p:" + p, to: `f:${p}:${f}`, kind: "main" });
+      nodes.push({ id: fid(p, f), type: "folder", label: f, x: Math.round(cx + 105 * Math.cos(ang.get(f))), y: Math.round(cy + 105 * Math.sin(ang.get(f))), r: 7,
+        detail: f === "scratch" ? "Temporary files, outside your projects." : "A folder inside the project." });
+      links.push({ from: "p:" + p, to: fid(p, f), kind: "main" });
     }
     const slot = new Map();
     for (const a of mine) {
-      const fs = top(a), main = fs[0][0];
+      const pl = places.get(a.id), main = pl.mine[0].folder;
       const j = slot.get(main) || 0; slot.set(main, j + 1);
-      const ang = fAngle.get(main) + (((j % 2) ? 1 : -1) * Math.ceil(j / 2) * 0.16);
-      const rad = 185 + (j % 3) * 26;
-      const mods = [...a.models.entries()].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1));
+      const th = (ang.get(main) ?? 0) + (((j % 2) ? 1 : -1) * Math.ceil(j / 2) * 0.16), rad = 185 + (j % 3) * 26;
+      const mods = [...a.models.entries()].sort(byCount);
       nodes.push({
         id: a.id, type: a.sub ? "subagent" : "chat", label: `${mods[0][0]} · ${fmt(a.fresh)}`, family: family(mods[0][0]),
-        x: Math.round(cx + rad * Math.cos(ang)), y: Math.round(cy + rad * Math.sin(ang)), r: Math.round((4 + 12 * Math.sqrt(a.fresh / maxFresh)) * 10) / 10,
+        x: Math.round(cx + rad * Math.cos(th)), y: Math.round(cy + rad * Math.sin(th)), r: Math.round((4 + 12 * Math.sqrt(a.fresh / maxFresh)) * 10) / 10,
         detail: `${a.sub ? "Subagent" : "Chat"} in ${p}. Fresh tokens ${fmt(a.fresh)}, cached ${fmt(a.cached)}. Models: ${mods.map(m => m[0]).join(", ")}. ` +
-          `Folders: ${fs.map(f => f[0] + " (" + f[1] + ")").join(", ")}.`,
+          `Folders: ${pl.mine.map(f => f.folder + " (" + f.n + ")").join(", ")}.` +
+          (pl.cross.length ? ` Also worked in: ${[...new Set(pl.cross.map(f => f.project))].join(", ")}.` : ""),
       });
-      links.push({ from: `f:${p}:${main}`, to: a.id, kind: "main" });
-      for (const [f] of fs.slice(1)) links.push({ from: `f:${p}:${f}`, to: a.id, kind: "more" });
-      if (a.sub && a.parentKey && shownIds.has(a.parentKey) && byId.has(a.parentKey)) links.push({ from: a.parentKey, to: a.id, kind: "parent" });
+      links.push({ from: fid(p, main), to: a.id, kind: "main" });
+      for (const f of pl.mine.slice(1)) links.push({ from: fid(p, f.folder), to: a.id, kind: "more" });
+      for (const f of pl.cross) {
+        links.push({ from: fid(f.project, f.folder), to: a.id, kind: "cross" });
+        bridge.set(p + "\t" + f.project, (bridge.get(p + "\t" + f.project) || new Set()).add(a.id));
+      }
+      if (a.sub && a.parentKey && shownIds.has(a.parentKey)) links.push({ from: a.parentKey, to: a.id, kind: "parent" });
     }
     const f = folded.get(p);
     if (f) {
@@ -220,6 +237,11 @@ export function buildGraph(agents) {
       links.push({ from: "p:" + p, to: "o:" + p, kind: "main" });
     }
   });
+  // project to project: how many agents of one project worked in another
+  for (const [k, set] of [...bridge.entries()].sort()) {
+    const [from, to] = k.split("\t");
+    links.push({ from: "p:" + from, to: "p:" + to, kind: "bridge", n: set.size });
+  }
   links.sort((a, b) => (a.from + a.to + a.kind < b.from + b.to + b.kind ? -1 : 1));
   // viewBox fits the nodes (plus room for labels), not the whole grid
   const PAD = 70;

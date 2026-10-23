@@ -1,5 +1,5 @@
 // Tests for scripts/agent-graph.mjs, with small fake logs in a fake home (never your real logs).
-//   node --test tests/
+//   node --test tests/*.test.mjs   (Node 24 reads a bare "tests/" as a module path, so name the files)
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readLogs, buildGraph, projectOf, folderOf, LIMITS } from "../scripts/agent-graph.mjs";
+import { readLogs, buildGraph, projectOf, placeOf, LIMITS } from "../scripts/agent-graph.mjs";
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "agent-graph.mjs");
 const TMP = mkdtempSync(join(tmpdir(), "tongs-agents-"));
@@ -48,13 +48,16 @@ test("project names: tools/x counts as x, outside the home folder and Library ar
   assert.equal(projectOf(h + "/.claude/worktrees/a", h).name, "other");
 });
 
-test("folder attribution: top-level folder, project root file, and 'shared' outside the project", () => {
-  const root = "/home/fake/forge";
-  assert.equal(folderOf(root + "/packages/engine/src/a.js", root), "packages");
-  assert.equal(folderOf(root + "/CLAUDE.md", root), "(project root)");
-  assert.equal(folderOf("/home/fake/ai-tracker/x.json", root), "shared");
-  assert.equal(folderOf("/etc/hosts", root), "shared");
-  assert.equal(folderOf(undefined, root), "shared");
+test("placeOf: folder in the project, root file, scratch for tmp and ~/.claude, other projects keep their name", () => {
+  const h = "/home/fake";
+  assert.deepEqual(placeOf(h + "/forge/packages/engine/a.js", "forge", h), { project: "forge", folder: "packages" });
+  assert.deepEqual(placeOf(h + "/forge/CLAUDE.md", "forge", h), { project: "forge", folder: "(project root)" });
+  assert.deepEqual(placeOf(h + "/forge/scripts", "forge", h), { project: "forge", folder: "scripts" }, "a bare folder name is a folder");
+  assert.deepEqual(placeOf(h + "/tools/zenith-mc/src/x.js", "zenith", h), { project: "zenith-mc", folder: "src" }, "another project");
+  assert.deepEqual(placeOf("/private/tmp/claude-501/x/out.txt", "forge", h), { project: "forge", folder: "scratch" });
+  assert.deepEqual(placeOf(h + "/.claude/projects/x.jsonl", "forge", h), { project: "forge", folder: "scratch" });
+  assert.deepEqual(placeOf(h + "/Library/x", "forge", h), { project: "forge", folder: "scratch" });
+  assert.equal(placeOf(undefined, "forge", h), null);
 });
 
 test("the same message in a chat file and a subagent file is counted once; fresh and cached are split", async () => {
@@ -77,14 +80,26 @@ test("a subagent is linked to its parent chat", async () => {
   assert.ok(graph.links.some(l => l.kind === "parent" && l.from === chat.id && l.to === sub.id));
 });
 
-test("folders come from file_path and path; Bash text is ignored; outside paths go to 'shared'", async () => {
+test("folders come from file_path and path; Bash text is ignored; tmp paths are scratch, not 'shared'", async () => {
   const home = newHome(), cwd = home + "/forge";
   write(home, "-p/s1.jsonl", [
     line({ id: "b1", cwd, tools: [{ input: { file_path: cwd + "/packages/engine/a.js" } }, { name: "Grep", input: { path: cwd + "/scripts" } }] }),
-    line({ id: "b2", cwd, tools: [{ name: "Bash", input: { command: "cat " + cwd + "/secrets/key.txt" } }, { input: { file_path: home + "/ai-tracker/x.json" } }] }),
+    line({ id: "b2", cwd, tools: [{ name: "Bash", input: { command: "cat " + cwd + "/secrets/key.txt" } }, { input: { file_path: "/private/tmp/x/out.txt" } }] }),
   ]);
   const { agents } = await read(home);
-  assert.deepEqual([...agents[0].folders.entries()].sort(), [["packages", 1], ["scripts", 1], ["shared", 1]]);
+  assert.deepEqual([...agents[0].folders.entries()].sort(), [["forge\tpackages", 1], ["forge\tscratch", 1], ["forge\tscripts", 1]]);
+});
+
+test("an agent that works in another project draws a crossing edge and a project-to-project bridge", async () => {
+  const home = newHome(), a = home + "/forge", b = home + "/ai-tracker";
+  write(home, "-p/s1.jsonl", [line({ id: "x1", out: 900, cwd: a, tools: [{ input: { file_path: a + "/src/a.js" } }, { input: { file_path: b + "/projects/forge.json" } }] })]);
+  write(home, "-q/s2.jsonl", [line({ id: "x2", out: 800, cwd: b, tools: [{ input: { file_path: b + "/maps/a.md" } }] })]);
+  const { graph } = await read(home);
+  const chat = graph.nodes.find(n => n.type === "chat" && /Folders: src/.test(n.detail));
+  assert.match(chat.detail, /Also worked in: ai-tracker/);
+  assert.ok(graph.nodes.some(n => n.id === "f:ai-tracker:projects"), "the reached-into folder exists in the other project");
+  assert.ok(graph.links.some(l => l.kind === "cross" && l.from === "f:ai-tracker:projects" && l.to === chat.id));
+  assert.ok(graph.links.some(l => l.kind === "bridge" && l.from === "p:forge" && l.to === "p:ai-tracker" && l.n === 1));
 });
 
 test("caps: extra agents fold into one 'other agents (n)' node and the cap is not exceeded", async () => {
@@ -141,6 +156,8 @@ test("the page holds no external URLs, home folder, message text or session ids"
   assert.equal(run(home, ["--out", out]).status, 0);
   const html = readFileSync(out, "utf8");
   assert.ok(html.includes("<svg"), "it is the agent page");
+  assert.ok(!/el\("(rect|polygon|ellipse)"/.test(html), "nodes are circles only");
+  assert.ok((html.match(/el\("path"[^)]*\)/g) || []).every(c => c.includes("bridge")), "paths are only the project-to-project bridges");
   const urls = (html.match(/https?:\/\/[^\s"'<>)]+/g) || []).filter(u => u !== "http://www.w3.org/2000/svg");
   assert.deepEqual(urls, [], "only the SVG namespace may look like a URL");
   assert.ok(!/(src|href)\s*=/.test(html) && !/url\(\s*['"]?https?:/.test(html), "nothing is loaded from the network");

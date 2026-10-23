@@ -39,9 +39,11 @@ h2{font:400 .7rem var(--f-mono);letter-spacing:.08em;text-transform:uppercase;co
 svg#g{width:100%;height:100%;display:block}
 .link{stroke:var(--edge);stroke-width:1;opacity:.45}
 .link.parent{stroke-dasharray:4 3;opacity:.7}
-.link.more{opacity:0}
+.link.more,.link.cross{opacity:0}
+.bridge{fill:none;stroke:var(--ink-dim);opacity:.55}
+.blbl{font:500 13px var(--f-mono);fill:var(--ink-2);text-anchor:middle;paint-order:stroke;stroke:var(--ground);stroke-width:4px}
 .dim{opacity:.12!important}
-.link.more.dim{opacity:0!important}
+.link.more.dim,.link.cross.dim{opacity:0!important}
 .on.link{opacity:1!important;stroke-width:1.6}
 .node{cursor:pointer}
 .node:focus-visible{outline:none}
@@ -57,13 +59,14 @@ svg#g{width:100%;height:100%;display:block}
 <div class="app">
   <aside class="rail">
     <h1>Agent graph</h1>
-    <p class="sub">Projects, the folders agents worked in, and the agents. Size is fresh tokens. Hover or click an agent for its other folders. Scroll to zoom, drag to move, double-click to reset.</p>
-    <h2>Shape</h2>
-    <div class="key"><svg viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>project</div>
-    <div class="key"><svg viewBox="0 0 16 16"><path d="M8 2l6 6-6 6-6-6z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>folder</div>
-    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="currentColor"/></svg>chat</div>
-    <div class="key"><svg viewBox="0 0 16 16"><path d="M8 2l6 11H2z" fill="currentColor"/></svg>subagent (dashed line to its chat)</div>
+    <p class="sub">Projects, the folders agents worked in, and the agents. Size is fresh tokens. Hover or click an agent for its other folders and the projects it reached into. Scroll to zoom, drag to move, double-click to reset.</p>
+    <h2>Circles</h2>
+    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="var(--surface)" stroke="currentColor" stroke-width="2.5"/></svg>project (large ring)</div>
+    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4" fill="var(--ground)" stroke="currentColor" stroke-width="1.5"/></svg>folder (small ring)</div>
+    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="currentColor"/></svg>chat (solid)</div>
+    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="currentColor" fill-opacity=".3" stroke="currentColor" stroke-width="1.5"/></svg>subagent (soft, dashed line to its chat)</div>
     <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2 2"/></svg>smaller agents folded together</div>
+    <div class="key"><svg viewBox="0 0 16 16"><path d="M1 12Q8 2 15 12" fill="none" stroke="currentColor" stroke-width="2"/></svg>agents of one project worked in another (number = agents)</div>
     <h2>Colour is the model</h2>
     <div id="models"></div>
     <h2>Details</h2>
@@ -109,19 +112,30 @@ svg#g{width:100%;height:100%;display:block}
   const pos = new Map(G.nodes.map(n => [n.id, n]));
   const linkEls = [];
   const gl = el("g", {}, svg), gn = el("g", {}, svg);
+  const maxBridge = Math.max(1, ...G.links.filter(l => l.kind === "bridge").map(l => l.n));
   G.links.forEach(l => { const a = pos.get(l.from), b = pos.get(l.to); if (!a || !b) return;
+    if (l.kind === "bridge") {
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y, bow = 0.18;
+      const cx = mx - dy * bow, cy = my + dx * bow;
+      const e = el("path", {d:`M${a.x} ${a.y}Q${cx} ${cy} ${b.x} ${b.y}`, class:"link bridge", "stroke-width":1.5 + 5 * Math.sqrt(l.n / maxBridge)}, gl);
+      linkEls.push({e, l});
+      text(el("text", {x:(a.x + 2 * cx + b.x) / 4, y:(a.y + 2 * cy + b.y) / 4, class:"blbl"}, gl), String(l.n));
+      return;
+    }
     const e = el("line", {x1:a.x, y1:a.y, x2:b.x, y2:b.y, class:"link " + l.kind}, gl); linkEls.push({e, l}); });
 
   const nodeEls = new Map();
   let selected = null;
+  // Every node is a circle; ring, fill and weight tell the types apart.
   function shape(n, parent) {
-    const fill = n.type === "chat" || n.type === "subagent" ? colour(n.family) : "var(--surface)";
-    const common = {class:"shape", fill, stroke:"var(--ink-2)", "stroke-width":1.2};
-    if (n.type === "project") return el("rect", Object.assign({x:n.x-n.r, y:n.y-n.r, width:2*n.r, height:2*n.r, rx:4}, common), parent);
-    if (n.type === "folder") return el("path", Object.assign({d:`M${n.x} ${n.y-n.r}L${n.x+n.r} ${n.y}L${n.x} ${n.y+n.r}L${n.x-n.r} ${n.y}Z`}, common), parent);
-    if (n.type === "subagent") return el("path", Object.assign({d:`M${n.x} ${n.y-n.r}L${n.x+n.r} ${n.y+n.r*0.8}L${n.x-n.r} ${n.y+n.r*0.8}Z`}, common), parent);
-    if (n.type === "other") return el("circle", Object.assign({cx:n.x, cy:n.y, r:n.r}, common, {fill:"none", "stroke-dasharray":"2 2"}), parent);
-    return el("circle", Object.assign({cx:n.x, cy:n.y, r:n.r}, common), parent);
+    const agent = n.type === "chat" || n.type === "subagent";
+    const a = {class:"shape", cx:n.x, cy:n.y, r:n.r, fill:"var(--surface)", stroke:"var(--ink-2)", "stroke-width":1.5};
+    if (n.type === "project") Object.assign(a, {stroke:"var(--ink)", "stroke-width":3});
+    if (n.type === "folder") Object.assign(a, {fill:"var(--ground)"});
+    if (n.type === "chat") Object.assign(a, {fill:colour(n.family), stroke:"var(--ground)"});
+    if (n.type === "subagent") Object.assign(a, {fill:colour(n.family), "fill-opacity":0.3, stroke:colour(n.family), "stroke-width":2});
+    if (n.type === "other") Object.assign(a, {fill:"none", "stroke-dasharray":"3 3"});
+    return el("circle", a, parent);
   }
   G.nodes.forEach(n => {
     const g = el("g", {class:"node", tabindex:"0", role:"button", "aria-label":n.type + ": " + n.label}, gn);
