@@ -172,8 +172,10 @@ circle,path,line{vector-effect:non-scaling-stroke}
       label.classList.toggle("force", forced && !planned);
       label.setAttribute("x", n.x);
       // same placement as labelBox() in agent-graph.mjs
-      const inside = n.label.length * (FONT[n.type] || FONT.leaf)[0] * s <= 1.5 * n.r && n.r >= 2 * hh;
-      label.setAttribute("y", isContainer(n) ? (inside ? n.y - n.r + hh * 0.9 : n.y - n.r - hh * 0.6) : forced && !planned ? n.y - n.r - hh * 0.7 : n.y);
+      // a planned label sits where the collision check at its zoom level put it, so use that level's scale
+      const sp = planned ? 1 / G.levels[lv] : s, hp = h * sp;
+      const inside = n.label.length * (FONT[n.type] || FONT.leaf)[0] * sp <= 1.5 * n.r && n.r >= 2 * hp;
+      label.setAttribute("y", isContainer(n) ? (inside ? n.y - n.r + hp * 0.9 : n.y - n.r - hp * 0.6) : forced && !planned ? n.y - n.r - hh * 0.7 : n.y);
       label.setAttribute("font-size", (h * 0.78 * s).toFixed(4));
       label.setAttribute("stroke-width", (3 * s).toFixed(4));
       if (badge) badge.t.setAttribute("font-size", (badge.br * 1.1).toFixed(4));
@@ -182,10 +184,12 @@ circle,path,line{vector-effect:non-scaling-stroke}
   }
   svg.addEventListener("wheel", ev => {
     ev.preventDefault();
-    const r = svg.getBoundingClientRect(), k = ev.deltaY < 0 ? 0.85 : 1 / 0.85;
+    const k = ev.deltaY < 0 ? 0.85 : 1 / 0.85;
     const w = Math.min(G.box[2] * 1.5, Math.max(G.box[2] / 400, vb[2] * k)), h = w * (vb[3] / vb[2]);
-    const fx = (ev.clientX - r.left) / r.width, fy = (ev.clientY - r.top) / r.height;
-    vb = [vb[0] + (vb[2] - w) * fx, vb[1] + (vb[3] - h) * fy, w, h]; apply();
+    // the world point under the pointer stays put (the square viewBox is letterboxed in a wider stage)
+    const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+    const m = svg.getScreenCTM(), p = m ? pt.matrixTransform(m.inverse()) : {x: vb[0] + vb[2] / 2, y: vb[1] + vb[3] / 2};
+    vb = [p.x - (p.x - vb[0]) * w / vb[2], p.y - (p.y - vb[1]) * h / vb[3], w, h]; apply();
   }, {passive:false});
   let drag = null, moved = false;
   svg.addEventListener("pointerdown", ev => { if (ev.button === 0) { drag = {x:ev.clientX, y:ev.clientY, vb:vb.slice()}; moved = false; } });

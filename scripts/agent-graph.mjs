@@ -40,11 +40,13 @@ const PATH_KEYS = ["file_path", "path", "notebook_path"];
 // Split on "\n" only: readline also splits on U+2028/U+2029, which appear inside JSON strings in real logs.
 async function* linesOf(file) {
   let rest = "";
-  for await (const chunk of createReadStream(file, { encoding: "utf8" })) {
-    const parts = (rest + chunk).split("\n");
-    rest = parts.pop();
-    yield* parts;
-  }
+  try {
+    for await (const chunk of createReadStream(file, { encoding: "utf8" })) {
+      const parts = (rest + chunk).split("\n");
+      rest = parts.pop();
+      yield* parts;
+    }
+  } catch { return; } // a file that cannot be read (permissions, deleted mid-run) is skipped, not fatal
   if (rest) yield rest;
 }
 
@@ -96,7 +98,9 @@ const family = name => (/^(opus|sonnet|haiku|fable|mythos)/.exec(name) || ["othe
 
 export async function readLogs(logsDir, { days = 14, home = homedir() } = {}) {
   const cutoff = Date.now() - days * 86400000;
-  const files = walk(logsDir).filter(f => statSync(f).mtimeMs >= cutoff);
+  // Oldest file first, so a resumed chat that replays an older chat's messages cannot take them from it.
+  const files = walk(logsDir).map(f => [f, statSync(f).mtimeMs]).filter(([, t]) => t >= cutoff)
+    .sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1)).map(([f]) => f);
   const seen = new Set();            // message.id + requestId, global
   const agents = new Map();          // key -> agent
   const problems = [];
@@ -477,14 +481,14 @@ export function buildGraph(agents, now = Date.now()) {
   placeLabels(nodes);
   for (const n of nodes) { if (!n.subs || !n.subs.length) delete n.subs; if (!n.cross || !n.cross.length) delete n.cross; }
   const days = [...new Set(nodes.filter(n => n.first).map(n => n.first.slice(0, 10)))].sort();
-  const PAD = 20;
+  const PAD = 36;
   return { nodes, bridges, days, box: [-PAD, -PAD, REF_W + 2 * PAD, REF_W + 2 * PAD], limits: LIMITS, levels: LEVELS, refW: REF_W,
     generated: new Date(Math.floor(now / 60000) * 60000).toISOString().slice(0, 16), activeMin: ACTIVE_MIN, active: nodes.filter(n => n.last && minuteOf(n.last) >= Math.floor(now / 60000) - ACTIVE_MIN).map(n => n.id),
     folded: [...folded.values()].reduce((s, x) => s + x.n, 0) };
 }
 
 export function fmt(n) {
-  return n >= 1e9 ? (n / 1e9).toFixed(1) + "B" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n);
+  return n >= 1e9 ? (n / 1e9).toFixed(1) + "B" : n >= 999500 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n);
 }
 
 // ---------------------------------------------------------------- the page
@@ -511,7 +515,12 @@ export function renderPage(graph) {
 // ---------------------------------------------------------------- command line
 async function main() {
   const args = process.argv.slice(2);
-  const opt = n => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
+  const opt = n => {
+    const i = args.indexOf(n);
+    if (i < 0) return undefined;
+    if (args[i + 1] === undefined || args[i + 1].startsWith("--")) { console.error("agent-graph: " + n + " needs a value"); process.exit(1); }
+    return args[i + 1];
+  };
   const home = homedir();
   const logs = resolve(opt("--logs") || join(home, ".claude", "projects"));
   const out = resolve(opt("--out") || join(home, ".claude", "tongs-maps", "agents.html"));
@@ -535,8 +544,10 @@ async function main() {
   console.log("Wrote  " + out);
 
   if (args.includes("--serve")) {
+    if (dirname(out) !== join(home, ".claude", "tongs-maps")) { console.error("agent-graph: --serve only serves ~/.claude/tongs-maps, so leave out --out or point it there."); process.exit(1); }
     const r = spawnSync(process.execPath, [join(here, "draw-map.mjs"), "--serve-only", basename(out)], { encoding: "utf8" });
     process.stdout.write(r.stdout || ""); process.stderr.write(r.stderr || "");
+    if (r.status) process.exit(r.status);
   } else if (!args.includes("--no-open")) {
     const opener = platform() === "darwin" ? "open" : platform() === "linux" ? "xdg-open" : null;
     if (!opener) console.log("Open it in a browser: " + out);

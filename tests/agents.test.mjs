@@ -314,3 +314,34 @@ test("subagent rings take the active/idle colour through style, not an attribute
   assert.match(html, /a\.style = "stroke:" \+ stateColour\(n\)/);
   assert.match(html, /G\.generated/);
 });
+
+test("fixes from the review: fmt rounds up cleanly, an option without a value is an error, --serve outside the maps folder is refused", async () => {
+  const { fmt } = await import("../scripts/agent-graph.mjs");
+  assert.equal(fmt(999499), "999k");
+  assert.equal(fmt(999500), "1.0M");
+  const home = newHome();
+  write(home, "-p/s.jsonl", [line({ id: "x", cwd: home + "/game", inp: 500 })]);
+  const r1 = run(home, ["--out", "--serve"]);
+  assert.equal(r1.status, 1);
+  assert.match(r1.stderr, /--out needs a value/);
+  const r2 = run(home, ["--out", join(TMP, "elsewhere.html"), "--serve"]);
+  assert.equal(r2.status, 1);
+  assert.match(r2.stderr, /only serves/);
+});
+
+test("a resumed chat that replays older messages does not take them from the older chat", async () => {
+  const home = newHome();
+  const old = join(logsOf(home), "-p/zzz-old.jsonl"), resumed = join(logsOf(home), "-p/aaa-resumed.jsonl");
+  const cwd = home + "/game", msg = line({ id: "m1", cwd, inp: 900 });
+  write(home, "-p/zzz-old.jsonl", [msg]);
+  write(home, "-p/aaa-resumed.jsonl", [msg, line({ id: "m2", cwd, inp: 10 })]);
+  const { utimesSync } = await import("node:fs");
+  utimesSync(old, new Date(Date.now() - 3600e3), new Date(Date.now() - 3600e3));
+  const { agents } = await read(home);
+  const byKey = Object.fromEntries(agents.map(a => [a.id, a.fresh]));
+  const total = agents.reduce((s, a) => s + a.fresh, 0);
+  assert.equal(total, 900 + 5 + 10 + 5);
+  // the older file (named zzz, so it sorts last by name) keeps the replayed message; the resumed one only its new one
+  assert.deepEqual(Object.values(byKey).sort((x, y) => y - x), [905, 15]);
+  assert.equal(agents.find(a => a.fresh === 905).first, "2026-10-23T10:00");
+});
