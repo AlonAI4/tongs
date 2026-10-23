@@ -1,0 +1,424 @@
+#!/usr/bin/env node
+// tongs-map.mjs: one map of all your work. The tracker is the hub in the middle, the group chat is
+// the ring around it, and every project is a dot linked to that ring. Zooming in shows each
+// project's chat map nodes, then their links, then the agents (chats and subagents) that worked on it.
+//
+// Usage:  node tongs-map.mjs [--out <file.html>] [--no-open] [--maps <dir>] [--tracker <dir>]
+//                            [--logs <dir>] [--days <n>]
+//
+// Reads  ~/ai-tracker/projects (index.json and each project's "meta" only; never writes there),
+//        ~/ai-tracker/chat-maps/GROUP-CHAT.md (when it last changed, never its text),
+//        the chat maps in ~/.claude/tongs-maps (the data inside each page, never its script),
+//        the logs in ~/.claude/projects through agent-graph.mjs (files changed in the last --days, 14).
+// Writes ~/.claude/tongs-maps/tongs.html (or --out) and index.md next to it: one line per chat map,
+//        for Claude to grep when a chat is lost. Then opens the page.
+//
+// Projects are the tracker's only. A chat map or a log folder that matches no tracker project
+// (by id or title) folds into one dot named "other"; no project is made from the logs.
+// Links between projects are drawn only where they are real: chats of two projects touched the same
+// file. They are dashed and labelled "inferred". Files in ~/.claude and ~/ai-tracker do not count:
+// every chat touches those, and the ring already stands for them.
+//
+// The layout is computed here, seeded and deterministic, and baked into the page, which only pans,
+// zooms and draws. The page is a snapshot: it says when it was built; run this again to refresh it.
+// Privacy: no message text, prompts, session ids or absolute home path (paths are written with ~).
+// Same inputs and the same minute give the same bytes. Zero dependencies, works offline.
+
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, resolve, basename, relative, sep } from "node:path";
+import { homedir, platform } from "node:os";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { readLogs, modelName, fmt, ACTIVE_MIN, minuteOf } from "./agent-graph.mjs";
+
+const here = dirname(fileURLToPath(import.meta.url));
+
+export const LIMITS = { agentsPerProject: 40, glow: 30, foldBelow: 100 };
+const TYPES = ["goal", "decision", "file", "done", "now", "open", "gotcha", "rule"];
+const SKIP = new Set(["latest.html", "tongs.html", "agents.html", "super.html"]);
+const NAME = /^\w[\w.-]*\.html$/; // the names serve-maps.mjs serves: safe in a link
+const DATA = /<script type="application\/json" id="graph-data">([\s\S]*?)<\/script>/;
+const IGNORED = ["~/.claude/", "~/ai-tracker/"]; // shared by every chat, so they link nothing
+
+// ---------------------------------------------------------------- colours
+// One background, one saturation, a hue per project (lightness steps after 8 projects).
+// Orange is never a project colour: it means active only. Every colour is checked for contrast.
+export const COLORS = { bg: "#0f0f1a", text: "#e6e6f0", dim: "#a3a6b8", active: "#ff8a2a", idle: "#8b8f9c", other: "#9a9fae", hub: "#e6e6f0", ring: "#6f7390" };
+const HUES = [205, 150, 265, 330, 180, 95, 235, 300];
+const TIERS = [64, 76, 54];
+
+const hex = v => Math.round(v * 255).toString(16).padStart(2, "0");
+function hsl(h, s, l) {
+  s /= 100; l /= 100;
+  const f = n => { const k = (n + h / 30) % 12; return l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
+  return "#" + hex(f(0)) + hex(f(8)) + hex(f(4));
+}
+export function contrast(a, b) {
+  const lum = c => {
+    const v = [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16) / 255).map(x => (x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+  };
+  const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+}
+export function projectColor(i) {
+  let l = TIERS[Math.floor(i / HUES.length) % TIERS.length], c = hsl(HUES[i % HUES.length], 60, l);
+  while (contrast(c, COLORS.bg) < 3.2 && l < 90) c = hsl(HUES[i % HUES.length], 60, l += 2);
+  return c;
+}
+
+// ---------------------------------------------------------------- reading
+const str = v => (typeof v === "string" && v.trim() ? v.trim() : null);
+const day = v => (typeof v === "string" && /^\d{4}-\d\d-\d\d/.test(v) ? v.slice(0, 10) : null);
+const minute = ms => new Date(Math.floor(ms / 60000) * 60000).toISOString().slice(0, 16);
+
+export function readTracker(dir) {
+  const projects = [];
+  let index = null;
+  try { index = JSON.parse(readFileSync(join(dir, "projects", "index.json"), "utf8")); } catch {}
+  for (const p of index && Array.isArray(index.projects) ? index.projects : []) {
+    if (!p || !str(p.id)) continue;
+    let meta = {};
+    // a locked project is encrypted: only its id is known
+    if (!p.locked && typeof p.file === "string" && /^[\w.-]+\.json$/.test(p.file)) {
+      try { meta = JSON.parse(readFileSync(join(dir, "projects", p.file), "utf8")).meta || {}; } catch {}
+    }
+    projects.push({ id: p.id, title: str(meta.title) || p.id, updated: day(meta.updated), status: str(p.status), locked: !!p.locked });
+  }
+  let board = null;
+  try { board = minute(statSync(join(dir, "chat-maps", "GROUP-CHAT.md")).mtimeMs); } catch {}
+  return { projects, board };
+}
+
+export function readMaps(dir) {
+  const maps = [], problems = [];
+  let names = [];
+  try { names = readdirSync(dir).filter(f => f.endsWith(".html") && !SKIP.has(f)).sort(); } catch { return { maps, problems }; }
+  for (const file of names) {
+    if (!NAME.test(file)) { problems.push(file + ": rename it to letters, digits, dots and dashes to include it"); continue; }
+    let data, mtime;
+    try {
+      const m = DATA.exec(readFileSync(join(dir, file), "utf8"));
+      if (!m) continue; // not a Tongs graph page
+      data = JSON.parse(m[1]);
+      mtime = statSync(join(dir, file)).mtimeMs;
+    } catch { problems.push(file + ": its graph data could not be read"); continue; }
+    const all = data && Array.isArray(data.nodes) ? data.nodes.filter(n => n && typeof n === "object") : [];
+    if (all.some(n => typeof n.x === "number" || n.type === "map")) continue; // an old agent or super graph page
+    const nodes = all.filter(n => str(n.id) && str(n.label) && TYPES.includes(n.type));
+    if (!nodes.length) { problems.push(file + ": no nodes"); continue; }
+    const ids = new Set(nodes.map(n => n.id)), name = basename(file, ".html");
+    maps.push({
+      name, file, json: existsSync(join(dir, name + ".json")) ? name + ".json" : null,
+      title: str(data.title) || name, project: str(data.project), updated: day(data.updated) || day(new Date(mtime).toISOString()),
+      nodes: nodes.map(n => ({ id: n.id, label: n.label.trim(), type: n.type })),
+      links: (Array.isArray(data.links) ? data.links : []).filter(l => l && ids.has(l.from) && ids.has(l.to) && l.from !== l.to).map(l => ({ from: l.from, to: l.to })),
+    });
+  }
+  return { maps, problems };
+}
+
+// "~/.claude/tongs-maps/x.json": never the absolute home path
+export const tilde = (p, home = homedir()) => (p === home ? "~" : p.startsWith(home + sep) ? "~/" + relative(home, p).split(sep).join("/") : p);
+export const resumePrompt = (path, id) => `Read ${path}, then continue from node ${id}.`;
+
+export function indexLines(maps, mapsDir) {
+  const one = s => s.replace(/[\r\n|]+/g, " ").replace(/\s+/g, " ").trim();
+  return maps.map(m => {
+    const goal = (m.nodes.find(n => n.type === "goal") || m.nodes[0]).label;
+    return `- ${m.projectLabel || m.project || "other"} | ${mapsDir}/${m.json || m.file} | ${one(goal)} | updated ${m.updated}`;
+  });
+}
+
+// ---------------------------------------------------------------- building
+const key = s => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+const GOLD = Math.PI * (3 - Math.sqrt(5));
+const round = v => Math.round(v * 10) / 10;
+export const RING = 70;
+
+// Repulsion between circles {x, y, f} plus a pull toward each one's own start, for a fixed number of
+// passes; then exact separation, so nothing overlaps whatever the input.
+function relax(list, { passes, gap, pull, springs = [], len = 0, keepOut = null }) {
+  const sep2 = (a, b, strength) => {
+    let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+    const min = a.f + b.f + gap;
+    if (d >= min) return false;
+    if (d < 1e-6) { dx = 1; dy = 0; d = 1; } // two at the same spot: push along x
+    const m = ((min - d) / d) * 0.5 * strength;
+    a.x -= dx * m; a.y -= dy * m; b.x += dx * m; b.y += dy * m;
+    return true;
+  };
+  for (let pass = 0; pass < passes; pass++) {
+    for (const [a, b] of springs) {
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, m = ((d - len) / d) * 0.04;
+      a.x += dx * m; a.y += dy * m; b.x -= dx * m; b.y -= dy * m;
+    }
+    for (const c of list) { c.x += (c.sx - c.x) * pull; c.y += (c.sy - c.y) * pull; }
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) sep2(list[i], list[j], 0.8);
+    if (keepOut) for (const c of list) keepOut(c);
+  }
+  for (let pass = 0; pass < 4000; pass++) {
+    let moved = false;
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) moved = sep2(list[i], list[j], 1.02) || moved;
+    if (keepOut) for (const c of list) moved = keepOut(c) || moved;
+    if (!moved) break;
+  }
+}
+
+export function buildMap({ tracker, maps = [], agents = [], mapsDir = "~/.claude/tongs-maps", now = Date.now() }) {
+  const projects = tracker.projects.map((p, i) => ({ id: "p:" + p.id, k: "project", label: p.title, src: p, color: projectColor(i), kids: [], more: 0 }));
+  const lookup = new Map();
+  for (const p of projects) for (const k of [key(p.src.id), key(p.src.title)]) if (k && !lookup.has(k)) lookup.set(k, p);
+  let other = null;
+  const otherProject = () => other || (other = { id: "p:~other", k: "project", label: "other", src: null, color: COLORS.other, kids: [], more: 0 });
+  const find = names => names.map(key).map(k => lookup.get(k)).find(Boolean) || null;
+
+  const edges = []; // [from id, to id, kind, extra]
+
+  // chat maps: their nodes are the project's parts, their links its links
+  for (const m of maps.slice().sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    const p = find([m.project, m.name, m.name.split(/[-_.]/)[0]]) || otherProject();
+    m.projectLabel = p.label;
+    const goal = m.nodes.find(n => n.type === "goal") || m.nodes[0];
+    const path = mapsDir + "/" + (m.json || m.file);
+    for (const n of m.nodes) {
+      p.kids.push({ id: `m:${m.name}:${n.id}`, k: "part", t: n.type, label: n.label.length > 60 ? n.label.slice(0, 59) + "..." : n.label,
+        map: m.title, file: m.file, resume: resumePrompt(path, n.id) });
+    }
+    edges.push([`m:${m.name}:${goal.id}`, p.id, "own"]);
+    for (const l of m.links) edges.push([`m:${m.name}:${l.from}`, `m:${m.name}:${l.to}`, "map"]);
+  }
+
+  // agents: chats and the subagents they started, in their chat's project
+  const byId = new Map(agents.map(a => [a.id, a]));
+  const nowMin = Math.floor(now / 60000);
+  const isActive = a => !!a.last && minuteOf(a.last) >= nowMin - ACTIVE_MIN;
+  const projOf = new Map(), shared = new Map(); // project -> paths its agents touched
+  for (const a of agents) {
+    const head = a.sub && byId.has(a.parentKey) ? byId.get(a.parentKey) : a;
+    const p = find([head.project]) || otherProject();
+    projOf.set(a.id, p);
+    if (p === other) continue;
+    if (!shared.has(p)) shared.set(p, new Set());
+    for (const path of a.paths || []) if (!IGNORED.some(x => path.startsWith(x))) shared.get(p).add(path);
+  }
+  const byProject = new Map();
+  for (const a of agents) {
+    if (a.fresh < LIMITS.foldBelow && !isActive(a)) continue;
+    const p = projOf.get(a.id);
+    if (!byProject.has(p)) byProject.set(p, []);
+    byProject.get(p).push(a);
+  }
+  const activeAll = [];
+  for (const [p, list] of byProject) {
+    list.sort((x, y) => isActive(y) - isActive(x) || y.fresh - x.fresh || (x.id < y.id ? -1 : 1));
+    const shown = list.slice(0, LIMITS.agentsPerProject), ids = new Set(shown.map(a => a.id));
+    p.more = list.length - shown.length;
+    for (const a of shown) {
+      const mods = [...a.models.entries()].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1)).map(e => e[0]);
+      const act = isActive(a);
+      const node = { id: "a:" + a.id, k: "agent", sub: a.sub ? 1 : 0, label: `${mods[0] || "other"} · ${fmt(a.fresh)}`, last: a.last,
+        detail: `${a.sub ? "Subagent" : "Chat"} in ${p.label}. Models: ${mods.join(", ") || "other"}. Fresh tokens ${fmt(a.fresh)}, cached ${fmt(a.cached)}.` +
+          (a.last ? ` Last wrote ${a.last.replace("T", " ")} UTC.` : "") + (act ? ` Active: wrote in the last ${ACTIVE_MIN} minutes.` : "") };
+      if (act) activeAll.push(node);
+      p.kids.push(node);
+      edges.push(["a:" + a.id, a.sub && ids.has(a.parentKey) ? "a:" + a.parentKey : p.id, "own"]);
+    }
+  }
+  // the most recent ones glow; the rest are orange without a glow and counted in the panel
+  activeAll.sort((x, y) => (x.last < y.last ? 1 : x.last > y.last ? -1 : x.id < y.id ? -1 : 1));
+  activeAll.forEach((n, i) => { n.act = i < LIMITS.glow ? 1 : 2; });
+
+  // inferred links: two projects whose chats touched the same file
+  const list = [...projects, ...(other ? [other] : [])];
+  for (let i = 0; i < projects.length; i++) for (let j = i + 1; j < projects.length; j++) {
+    const a = shared.get(projects[i]), b = shared.get(projects[j]);
+    if (!a || !b) continue;
+    const both = [...a].filter(x => b.has(x)).sort();
+    if (both.length) edges.push([projects[i].id, projects[j].id, "inferred", { n: both.length, files: both.slice(0, 5) }]);
+  }
+  for (const p of list) edges.push([p.id, "ring", "ring"]);
+
+  // degree -> dot size
+  const deg = new Map();
+  for (const [a, b] of edges) for (const x of [a, b]) deg.set(x, (deg.get(x) || 0) + 1);
+  const rOf = (n, base) => base + 1.4 * Math.sqrt(deg.get(n.id) || 0);
+
+  // layout, inside each project: a golden-angle spiral, then relaxation with link springs
+  for (const p of list) {
+    p.r = rOf(p, 7);
+    p.kids.forEach((c, j) => {
+      c.r = rOf(c, c.k === "agent" ? 2.2 : 2.6);
+      c.f = c.r + 7;
+      const a = j * GOLD, rr = p.r + 18 + 12 * Math.sqrt(j);
+      c.x = c.sx = rr * Math.cos(a); c.y = c.sy = rr * Math.sin(a);
+    });
+    const at = new Map(p.kids.map(c => [c.id, c]));
+    const springs = edges.filter(e => at.has(e[0]) && at.has(e[1])).map(e => [at.get(e[0]), at.get(e[1])]);
+    const centre = { r: p.r };
+    relax(p.kids, { passes: 150, gap: 2, pull: 0.01, springs, len: 22, keepOut: c => {
+      const d = Math.hypot(c.x, c.y), min = centre.r + c.f + 4;
+      if (d >= min) return false;
+      const k = d < 1e-6 ? 0 : min / d;
+      if (!k) { c.x = min; c.y = 0; } else { c.x *= k; c.y *= k; }
+      return true;
+    } });
+    p.f = Math.max(p.r + 30, ...p.kids.map(c => Math.hypot(c.x, c.y) + c.r + 14));
+  }
+
+  // projects: a golden-angle spiral outside the ring, relaxed so footprints never overlap
+  list.forEach((p, i) => {
+    const a = i * GOLD - Math.PI / 2, rr = RING + 70 + p.f + 110 * Math.sqrt(i);
+    p.x = p.sx = rr * Math.cos(a); p.y = p.sy = rr * Math.sin(a);
+  });
+  relax(list, { passes: 300, gap: 46, pull: 0.02, keepOut: p => {
+    const d = Math.hypot(p.x, p.y), min = RING + p.f + 40;
+    if (d >= min) return false;
+    const k = d < 1e-6 ? 0 : min / d;
+    if (!k) { p.x = min; p.y = 0; } else { p.x *= k; p.y *= k; }
+    return true;
+  } });
+
+  // flatten: hub, ring, projects, then each project's kids in absolute positions
+  const nodes = [
+    { id: "hub", k: "hub", label: "the tracker", x: 0, y: 0, r: 14, st: 0,
+      detail: `${projects.length} projects on the tracker` + (tracker.projects.some(p => p.updated) ? `, newest update ${tracker.projects.map(p => p.updated).filter(Boolean).sort().pop()}.` : ".") },
+    { id: "ring", k: "ring", label: "group chat", x: 0, y: -RING, r: 0, st: 0,
+      detail: "The group chat: the board where your chats leave messages for each other. " + (tracker.board ? `It last changed ${tracker.board.replace("T", " ")} UTC.` : "No board found.") },
+  ];
+  list.forEach((p, i) => {
+    const parts = p.kids.filter(c => c.k === "part").length, ags = p.kids.length - parts;
+    nodes.push({ id: p.id, k: "project", label: p.label, x: round(p.x), y: round(p.y), r: round(p.r), st: 0, c: i,
+      detail: p === other ? `Chats and maps from folders that are not on the tracker. ${parts} map nodes, ${ags} agents shown.` :
+        `Project${p.src.locked ? " (locked on the tracker)" : ""}. ${parts} map nodes, ${ags} agents shown` + (p.more ? `, ${p.more} more not shown` : "") + "." +
+        (p.src.updated ? ` Tracker updated ${p.src.updated}.` : "") });
+  });
+  const pIndex = new Map(list.map((p, i) => [p.id, i]));
+  for (const p of list) for (const c of p.kids) {
+    const out = { id: c.id, k: c.k, label: c.label, x: round(p.x + c.x), y: round(p.y + c.y), r: round(c.r), st: c.k === "agent" ? 3 : 1, c: pIndex.get(p.id), p: p.id };
+    for (const f of ["t", "map", "file", "resume", "detail", "sub", "act"]) if (c[f] !== undefined) out[f] = c[f];
+    nodes.push(out);
+  }
+
+  const span = Math.max(...nodes.map(n => Math.hypot(n.x, n.y) + n.r)) + 40;
+  const zRef = 500 / span;
+  const stages = [[1.3, 2.0], [1.8, 2.8], [2.6, 3.8]].map(s => s.map(f => round4(f * zRef)));
+  const levels = [0.25, 0.35, 0.5, 0.7, 1, 1.4, 2, 2.8, 4, 5.6, 8, 11, 16, 22].map(f => round4(f * zRef));
+  placeLabels(nodes, levels, stages, round4(zRef));
+
+  const index = new Map(nodes.map((n, i) => [n.id, i]));
+  return {
+    nodes, levels, stages, zRef: round4(zRef), ring: RING, span: round(span),
+    edges: edges.filter(e => index.has(e[0]) && index.has(e[1])).map(e => (e[3] ? [index.get(e[0]), index.get(e[1]), e[2], e[3]] : [index.get(e[0]), index.get(e[1]), e[2]])),
+    colors: { ...COLORS, projects: list.map(p => p.color) },
+    projects: projects.length, active: activeAll.filter(n => !n.sub).length, glowMore: Math.max(0, activeAll.length - LIMITS.glow),
+    generated: minute(now), activeMin: ACTIVE_MIN,
+  };
+}
+const round4 = v => Math.round(v * 1e4) / 1e4;
+
+// ---------------------------------------------------------------- labels
+// For each zoom level, a label shows only where it hits no label already placed (hub, ring, projects,
+// then bigger dots first, so the smallest hide first). It tries below, above, right and left of its dot.
+// A part or agent is only labelled at levels where its stage has fully faded in, so it sits at its
+// final place. The page draws exactly these: per level, "." hidden or the position 0 to 3.
+export const FONT = { project: [7.2, 15], other: [6.6, 14] }; // px per character (IBM Plex Mono), line height
+export const smooth = (z, [a, b]) => (z <= a ? 0 : z >= b ? 1 : ((z - a) / (b - a)) ** 2 * (3 - 2 * ((z - a) / (b - a))));
+export const stageAlpha = (st, z, stages) => (st === 0 ? 1 : smooth(z, stages[st === 3 ? 2 : 0]));
+
+// A dot grows slower than the zoom (with its square root), so zooming in spreads dots apart
+// instead of making big circles. zRef is the zoom at which the whole map is about 1000 px across.
+export const dotPx = (n, z, zRef) => (n.k === "ring" ? 0 : Math.max(n.k === "project" || n.k === "hub" ? 3 : 1.5, n.r * Math.sqrt(z * zRef)));
+
+export function labelBox(n, z, pos, zRef) {
+  const [cw, lh] = n.k === "project" || n.k === "hub" ? FONT.project : FONT.other;
+  const w = n.label.length * cw / z, h = lh / z, g = 3 / z, r = dotPx(n, z, zRef) / z;
+  if (pos === 0) return { x0: n.x - w / 2, x1: n.x + w / 2, y0: n.y + r + g, y1: n.y + r + g + h };
+  if (pos === 1) return { x0: n.x - w / 2, x1: n.x + w / 2, y0: n.y - r - g - h, y1: n.y - r - g };
+  if (pos === 2) return { x0: n.x + r + g, x1: n.x + r + g + w, y0: n.y - h / 2, y1: n.y + h / 2 };
+  return { x0: n.x - r - g - w, x1: n.x - r - g, y0: n.y - h / 2, y1: n.y + h / 2 };
+}
+const hit = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+
+function placeLabels(nodes, levels, stages, zRef) {
+  const rank = { hub: 0, ring: 0, project: 1, part: 2, agent: 2 };
+  const order = nodes.slice().sort((a, b) => rank[a.k] - rank[b.k] || b.r - a.r || (a.id < b.id ? -1 : 1));
+  for (const n of nodes) n.lv = "";
+  levels.forEach(z => {
+    const placed = [];
+    for (const n of order) {
+      let got = ".";
+      if (stageAlpha(n.st, z, stages) >= 1) {
+        for (const pos of n.k === "ring" ? [1] : [0, 1, 2, 3]) {
+          const box = labelBox(n, z, pos, zRef);
+          if (!placed.some(p => hit(p, box))) { placed.push(box); got = String(pos); break; }
+        }
+      }
+      n.lv += got;
+    }
+  });
+}
+
+// ---------------------------------------------------------------- the page
+export function renderPage(graph) {
+  const json = JSON.stringify(graph)
+    .replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+  const FONTS = [
+    ["Big Shoulders Display", 700, "big-shoulders-display-latin-700-normal.woff2"],
+    ["IBM Plex Mono", 400, "ibm-plex-mono-latin-400-normal.woff2"],
+    ["IBM Plex Sans", 400, "ibm-plex-sans-latin-400-normal.woff2"],
+    ["IBM Plex Sans", 600, "ibm-plex-sans-latin-600-normal.woff2"],
+  ];
+  let fontCss = "";
+  for (const [fam, w, file] of FONTS) {
+    const p = join(here, "..", "assets", "fonts", file);
+    if (!existsSync(p)) continue;
+    fontCss += `@font-face{font-family:"${fam}";font-style:normal;font-weight:${w};font-display:swap;src:url(data:font/woff2;base64,${readFileSync(p).toString("base64")}) format("woff2")}\n`;
+  }
+  const fill = { FONTS: fontCss, DATA: json };
+  return readFileSync(join(here, "tongs-template.html"), "utf8").replace(/\/\*__(FONTS|DATA)__\*\//g, (_, k) => fill[k]);
+}
+
+// ---------------------------------------------------------------- command line
+async function main() {
+  const args = process.argv.slice(2);
+  const opt = n => {
+    const i = args.indexOf(n);
+    if (i < 0) return undefined;
+    if (args[i + 1] === undefined || args[i + 1].startsWith("--")) { console.error("tongs-map: " + n + " needs a value"); process.exit(1); }
+    return args[i + 1];
+  };
+  const home = homedir();
+  const mapsDir = resolve(opt("--maps") || join(home, ".claude", "tongs-maps"));
+  const trackerDir = resolve(opt("--tracker") || join(home, "ai-tracker"));
+  const logs = resolve(opt("--logs") || join(home, ".claude", "projects"));
+  const out = resolve(opt("--out") || join(home, ".claude", "tongs-maps", "tongs.html"));
+  const days = Number(opt("--days") || 14);
+  if (!(days > 0)) { console.error("tongs-map: --days must be a number above 0"); process.exit(1); }
+
+  const tracker = readTracker(trackerDir);
+  if (!tracker.projects.length) { console.error("tongs-map: no projects found in " + tilde(join(trackerDir, "projects", "index.json"), home) + ". Use --tracker <folder>."); process.exit(1); }
+  const { maps, problems } = readMaps(mapsDir);
+  const { agents, problems: bad } = existsSync(logs) ? await readLogs(logs, { days, home }) : { agents: [], problems: [] };
+  const graph = buildMap({ tracker, maps, agents, mapsDir: tilde(mapsDir, home) });
+  for (const p of problems) console.warn("tongs-map: " + p);
+  if (bad.length) console.warn(`tongs-map: skipped ${bad.length} bad log lines`);
+
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, renderPage(graph));
+  const idx = join(dirname(out), "index.md");
+  writeFileSync(idx, "# Tongs maps\n\nOne line per chat map: project | map | goal | last updated. Read the map, then continue from a node.\n\n" +
+    (maps.length ? indexLines(maps, tilde(mapsDir, home)).join("\n") : "No chat maps yet. Run /tongs in a chat to make one.") + "\n");
+  const count = k => graph.nodes.filter(n => n.k === k).length;
+  console.log(`Tongs map: ${graph.projects} projects, ${maps.length} chat maps (${count("part")} nodes), ${count("agent")} agents, ${graph.active} chats active`);
+  console.log("Wrote  " + tilde(out, home));
+  console.log("Wrote  " + tilde(idx, home));
+  if (!args.includes("--no-open")) {
+    const opener = platform() === "darwin" ? "open" : platform() === "linux" ? "xdg-open" : null;
+    if (!opener) console.log("Open it in a browser: " + out);
+    else { spawn(opener, [out], { stdio: "ignore", detached: true }).on("error", () => console.log("Could not open it. Open: " + out)).unref(); console.log("Opened it in your browser."); }
+  }
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

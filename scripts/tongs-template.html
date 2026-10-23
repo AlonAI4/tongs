@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- No network at all: everything this page needs is inside it. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:">
+<title>Tongs map</title>
+<style>
+/*__FONTS__*/
+:root{
+  color-scheme:dark; --bg:#0f0f1a; --panel:#151524; --line:#2a2a40; --ink:#e6e6f0; --dim:#a3a6b8; --active:#ff8a2a;
+  --f-display:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
+  --f-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:.9375rem;line-height:1.5;overflow:hidden}
+:focus-visible{outline:2px solid var(--active);outline-offset:2px}
+.app{display:grid;grid-template-columns:minmax(0,1fr) 320px;height:100vh;height:100dvh}
+.stage{position:relative;min-width:0}
+canvas{display:block;width:100%;height:100%;cursor:grab;touch-action:none}
+canvas.drag{cursor:grabbing}
+.status{position:absolute;left:14px;bottom:12px;font:400 .78rem var(--f-mono);color:var(--dim);pointer-events:none;background:rgba(15,15,26,.8);padding:2px 6px;border-radius:4px}
+.panel{background:var(--panel);border-left:1px solid var(--line);padding:16px;overflow:auto;display:flex;flex-direction:column;gap:12px}
+.head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+h1{font:700 1.7rem/1 var(--f-display);letter-spacing:.03em;text-transform:uppercase;margin:0}
+.toggle{display:none}
+h2{font:400 .7rem var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin:0 0 6px}
+.snap{color:var(--dim);font-size:.8rem;margin:0}
+input[type=search]{width:100%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:7px 9px;font:inherit;font-size:.875rem}
+ul{list-style:none;margin:0;padding:0}
+.results li{padding:4px 8px;border-radius:4px;cursor:pointer;font-size:.85rem;display:flex;justify-content:space-between;gap:8px}
+.results li span{color:var(--dim);font-size:.75rem;white-space:nowrap}
+.results li[aria-selected=true]{background:var(--line)}
+#info{font-size:.85rem;color:var(--dim);overflow-wrap:anywhere;min-height:3em}
+#info b{display:block;color:var(--ink);font-size:.95rem;margin-bottom:2px}
+#info a{color:var(--ink)}
+.state{display:inline-block;font:400 .7rem var(--f-mono);text-transform:uppercase;letter-spacing:.06em;padding:1px 6px;border-radius:3px;border:1px solid var(--dim);color:var(--dim);margin:2px 0 4px}
+.state.on{border-color:var(--active);color:var(--active)}
+button{font:inherit;font-size:.85rem;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 10px;cursor:pointer}
+button:hover{border-color:var(--dim)}
+button[disabled]{opacity:.5;cursor:default}
+.chip{font:400 .75rem var(--f-mono);color:var(--active);border:1px solid var(--active);border-radius:10px;padding:1px 8px;align-self:flex-start}
+.chip[hidden]{display:none}
+.key{display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--dim);margin:2px 0}
+.dot{width:10px;height:10px;border-radius:50%;flex:none}
+.visible{display:flex;flex-wrap:wrap;gap:4px}
+.visible button{font-size:.75rem;padding:2px 7px}
+@media (max-width:700px){
+  .app{grid-template-columns:1fr}
+  .panel{position:fixed;left:0;right:0;bottom:0;max-height:55vh;border-left:0;border-top:1px solid var(--line);border-radius:12px 12px 0 0;padding:10px 16px}
+  .panel.closed{max-height:3.4rem;overflow:hidden}
+  .toggle{display:inline-block}
+  .status{bottom:auto;top:10px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="stage">
+    <canvas id="c" aria-label="Map of your projects. Use the search and the list in the panel to move around it with the keyboard."></canvas>
+    <div class="status" id="status"></div>
+  </div>
+  <aside class="panel" id="panel" aria-label="Map panel">
+    <div class="head"><h1>Tongs map</h1><button class="toggle" id="toggle" aria-expanded="false" aria-controls="panel">Show panel</button></div>
+    <p class="snap" id="snap"></p>
+    <div>
+      <h2><label for="q">Search</label></h2>
+      <input type="search" id="q" placeholder="A project, node or model" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="results" aria-autocomplete="list">
+      <ul class="results" id="results" role="listbox" aria-label="Search results"></ul>
+    </div>
+    <div>
+      <h2>Selected</h2>
+      <div id="info" aria-live="polite">Click a dot, or search for one.</div>
+      <p style="margin:8px 0 0"><button id="copy" disabled>Copy resume prompt</button> <span id="copied" class="snap" aria-live="polite"></span></p>
+    </div>
+    <span class="chip" id="more" hidden></span>
+    <div>
+      <h2>Key</h2>
+      <div class="key"><span class="dot" style="background:var(--active);box-shadow:0 0 6px var(--active)"></span>active agent (wrote in the last 15 minutes)</div>
+      <div class="key"><span class="dot" id="idleDot"></span>idle agent</div>
+      <div class="key"><svg width="22" height="10" aria-hidden="true"><line x1="0" y1="5" x2="22" y2="5" stroke="#a3a6b8" stroke-dasharray="4 3"/></svg>inferred: two projects touched the same file</div>
+      <div class="key">Zoom in: project parts, then links, then agents.</div>
+    </div>
+    <div>
+      <h2>In view</h2>
+      <div class="visible" id="visible" role="list"></div>
+    </div>
+  </aside>
+</div>
+<script type="application/json" id="graph-data">/*__DATA__*/</script>
+<script>
+"use strict";
+const G = JSON.parse(document.getElementById("graph-data").textContent);
+const N = G.nodes, C = G.colors;
+const byId = new Map(N.map(n => [n.id, n]));
+const canvas = document.getElementById("c"), ctx = canvas.getContext("2d");
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let W = 0, H = 0, dpr = 1, view = { z: 1, x: 0, y: 0 }, sel = null, frame = 0, anim = null;
+
+// ---------------------------------------------------------------- stages
+const smooth = (z, s) => { const a = s[0], b = s[1]; if (z <= a) return 0; if (z >= b) return 1; const t = (z - a) / (b - a); return t * t * (3 - 2 * t); };
+const stageA = (st, z) => st === 0 ? 1 : smooth(z, G.stages[st === 3 ? 2 : 0]);
+const linkA = z => smooth(z, G.stages[1]);
+function levelOf(z) { let i = -1; for (let k = 0; k < G.levels.length; k++) if (G.levels[k] <= z * 1.0001) i = k; return i; }
+// where a dot is drawn: parts and agents ease outward from their project dot as their stage fades in
+function at(n, z) {
+  const a = stageA(n.st, z);
+  if (n.st === 0 || a >= 1) return [n.x, n.y, a];
+  const p = byId.get(n.p);
+  return [p.x + (n.x - p.x) * a, p.y + (n.y - p.y) * a, a];
+}
+const dotPx = (n, z) => n.k === "ring" ? 0 : Math.max(n.k === "project" || n.k === "hub" ? 3 : 1.5, n.r * Math.sqrt(z * G.zRef));
+const colorOf = n => n.k === "agent" ? (n.act ? C.active : C.idle) : n.k === "hub" ? C.hub : C.projects[n.c] || C.other;
+
+// ---------------------------------------------------------------- glow sprite (made once, never per-frame blur)
+const glow = document.createElement("canvas");
+(() => { glow.width = glow.height = 64; const g = glow.getContext("2d"), r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  r.addColorStop(0, "rgba(255,138,42,.85)"); r.addColorStop(.35, "rgba(255,138,42,.35)"); r.addColorStop(1, "rgba(255,138,42,0)");
+  g.fillStyle = r; g.fillRect(0, 0, 64, 64); })();
+
+// ---------------------------------------------------------------- drawing
+function resize() {
+  const r = canvas.getBoundingClientRect(); dpr = window.devicePixelRatio || 1;
+  W = r.width; H = r.height; canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+  request();
+}
+// Fit the hub, ring and projects with their labels: a label keeps its size on screen, so a few rounds settle it.
+function fit() {
+  let z = G.levels[3], b;
+  for (let round = 0; round < 6; round++) {
+    const lv = levelOf(z);
+    b = [Infinity, Infinity, -Infinity, -Infinity];
+    const add = (x, y) => { b[0] = Math.min(b[0], x); b[1] = Math.min(b[1], y); b[2] = Math.max(b[2], x); b[3] = Math.max(b[3], y); };
+    for (const n of N) {
+      if (n.st !== 0) continue;
+      const X = n.x * z, Y = n.y * z, R = dotPx(n, z), w = n.label.length * 7.2, pos = lv < 0 ? "." : n.lv[lv];
+      add(X - R, Y - R); add(X + R, Y + R);
+      if (pos === "0") { add(X - w / 2, Y + R + 18); add(X + w / 2, Y); }
+      else if (pos === "1") { add(X - w / 2, Y - R - 18); add(X + w / 2, Y); }
+      else if (pos === "2") add(X + R + 3 + w, Y);
+      else if (pos === "3") add(X - R - 3 - w, Y);
+    }
+    if (round === 5) break;
+    z = Math.max(G.levels[0] * 0.6, z * Math.min((W - 24) / (b[2] - b[0]), (H - 60) / (b[3] - b[1])));
+  }
+  return { z, x: W / 2 - (b[0] + b[2]) / 2, y: H / 2 - (b[1] + b[3]) / 2 };
+}
+const sx = x => x * view.z + view.x, sy = y => y * view.z + view.y;
+
+function grid() {
+  const z = view.z, step = Math.pow(2, Math.round(Math.log2(40 / z))), px = step * z;
+  const cx = sx(0), cy = sy(0), far = Math.hypot(W, H) * 0.75;
+  for (const major of [false, true]) {
+    const s = major ? step * 5 : step;
+    ctx.strokeStyle = major ? "rgba(230,230,240,.065)" : "rgba(230,230,240,.035)";
+    ctx.lineWidth = 1; ctx.beginPath();
+    for (let x = Math.floor(-view.x / z / s) * s; x * z + view.x < W; x += s) { const X = Math.round(x * z + view.x) + .5; ctx.moveTo(X, 0); ctx.lineTo(X, H); }
+    for (let y = Math.floor(-view.y / z / s) * s; y * z + view.y < H; y += s) { const Y = Math.round(y * z + view.y) + .5; ctx.moveTo(0, Y); ctx.lineTo(W, Y); }
+    ctx.stroke();
+    if (px < 1) break;
+  }
+  // fade the grid out away from the hub
+  const f = ctx.createRadialGradient(cx, cy, Math.min(W, H) * 0.25, cx, cy, far);
+  f.addColorStop(0, "rgba(15,15,26,0)"); f.addColorStop(1, "rgba(15,15,26,.92)");
+  ctx.fillStyle = f; ctx.fillRect(0, 0, W, H);
+}
+
+const onScreen = (x, y, m) => x > -m && x < W + m && y > -m && y < H + m;
+
+function draw(t) {
+  const z = view.z, la = linkA(z), pulse = reduced ? 1 : 0.72 + 0.28 * Math.sin((t || 0) / 700);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+  grid();
+  const P = N.map(n => at(n, z));
+  // ring
+  ctx.strokeStyle = C.ring; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx(0), sy(0), G.ring * z, 0, 2 * Math.PI); ctx.stroke();
+  // lines: constant width on screen
+  let glowing = false;
+  ctx.lineWidth = 1;
+  for (const e of G.edges) {
+    const a = N[e[0]], b = N[e[1]], kind = e[2];
+    let alpha, x1, y1, x2, y2;
+    if (kind === "ring") {
+      const d = Math.hypot(a.x, a.y) || 1;
+      alpha = 0.45; x1 = a.x; y1 = a.y; x2 = a.x / d * G.ring; y2 = a.y / d * G.ring;
+    } else {
+      alpha = la * Math.min(P[e[0]][2], P[e[1]][2]) * (kind === "inferred" ? 0.5 : 0.55);
+      x1 = P[e[0]][0]; y1 = P[e[0]][1]; x2 = P[e[1]][0]; y2 = P[e[1]][1];
+    }
+    if (alpha < 0.01) continue;
+    const X1 = sx(x1), Y1 = sy(y1), X2 = sx(x2), Y2 = sy(y2);
+    if (Math.max(X1, X2) < 0 || Math.min(X1, X2) > W || Math.max(Y1, Y2) < 0 || Math.min(Y1, Y2) > H) continue;
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = kind === "inferred" ? C.dim : kind === "ring" ? C.ring : (C.projects[a.c] || C.other);
+    ctx.setLineDash(kind === "inferred" ? [5, 4] : []);
+    ctx.beginPath(); ctx.moveTo(X1, Y1); ctx.lineTo(X2, Y2); ctx.stroke();
+    if (kind === "inferred" && la > 0.5) { ctx.fillStyle = C.dim; ctx.font = "10px 'IBM Plex Mono', monospace"; ctx.textAlign = "center"; ctx.fillText("inferred", (X1 + X2) / 2, (Y1 + Y2) / 2 - 4); }
+  }
+  ctx.setLineDash([]); ctx.globalAlpha = 1;
+  // dots
+  for (let i = 0; i < N.length; i++) {
+    const n = N[i]; if (n.k === "ring") continue;
+    const [x, y, a] = P[i]; if (a < 0.01) continue;
+    const X = sx(x), Y = sy(y), R = dotPx(n, z);
+    if (!onScreen(X, Y, R + 20)) continue;
+    ctx.globalAlpha = a;
+    if (n.act === 1) { glowing = true; const g = R * 5 + 8; ctx.globalAlpha = a * pulse; ctx.drawImage(glow, X - g, Y - g, g * 2, g * 2); ctx.globalAlpha = a; }
+    ctx.fillStyle = colorOf(n); ctx.beginPath(); ctx.arc(X, Y, R, 0, 2 * Math.PI); ctx.fill();
+    if (n.act) { ctx.lineWidth = 2; ctx.strokeStyle = "#ffd2ad"; ctx.stroke(); }
+    if (n.k === "project" || n.k === "hub") { ctx.lineWidth = 1.5; ctx.strokeStyle = C.bg; ctx.stroke(); }
+    if (sel === n) { ctx.lineWidth = 2; ctx.strokeStyle = C.text; ctx.beginPath(); ctx.arc(X, Y, R + 4, 0, 2 * Math.PI); ctx.stroke(); }
+  }
+  ctx.globalAlpha = 1;
+  // labels: exactly the ones placed for this zoom level, where they were placed
+  const lv = levelOf(z);
+  ctx.textBaseline = "middle"; ctx.lineJoin = "round";
+  for (let i = 0; i < N.length; i++) {
+    const n = N[i], pos = lv < 0 ? "." : n.lv[lv];
+    if (pos === "." && sel !== n) continue;
+    const [x, y, a] = P[i]; if (a < 1) continue;
+    const big = n.k === "project" || n.k === "hub", fs = big ? 12 : 11, X = sx(x), Y = sy(y), R = dotPx(n, z);
+    if (!onScreen(X, Y, 200)) continue;
+    let tx = X, ty = Y, align = "center";
+    const p = pos === "." ? "0" : pos;
+    if (p === "0") ty = Y + R + 3 + (big ? 7.5 : 7);
+    else if (p === "1") ty = Y - R - 3 - (big ? 7.5 : 7);
+    else if (p === "2") { tx = X + R + 3; align = "left"; }
+    else { tx = X - R - 3; align = "right"; }
+    ctx.font = `${fs}px 'IBM Plex Mono', monospace`; ctx.textAlign = align;
+    ctx.strokeStyle = C.bg; ctx.lineWidth = 3; ctx.strokeText(n.label, tx, ty);
+    ctx.fillStyle = big || n.k === "ring" ? C.text : C.dim; ctx.fillText(n.label, tx, ty);
+  }
+  return glowing;
+}
+
+function request() { if (!frame) frame = requestAnimationFrame(loop); }
+function loop(t) {
+  frame = 0;
+  if (anim) { const k = Math.min(1, (t - anim.t0) / 420), e = k * k * (3 - 2 * k); view = { z: anim.a.z * Math.pow(anim.b.z / anim.a.z, e), x: anim.a.x + (anim.b.x - anim.a.x) * e, y: anim.a.y + (anim.b.y - anim.a.y) * e }; if (k >= 1) anim = null; }
+  const glowing = draw(t);
+  if (anim || (glowing && !reduced)) request();
+  status(); listVisible();
+}
+function go(to) { if (reduced) { view = to; anim = null; } else anim = { a: { ...view }, b: to, t0: performance.now() }; request(); }
+
+// ---------------------------------------------------------------- moving around
+const ZMIN = G.levels[0] * 0.6, ZMAX = G.levels[G.levels.length - 1] * 1.5;
+function zoomAt(px, py, f) {
+  const z = Math.max(ZMIN, Math.min(ZMAX, view.z * f));
+  view = { z, x: px - (px - view.x) * (z / view.z), y: py - (py - view.y) * (z / view.z) }; anim = null; request();
+}
+canvas.addEventListener("wheel", e => { e.preventDefault(); const r = canvas.getBoundingClientRect(); zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * (e.deltaMode ? 0.05 : 0.0015))); }, { passive: false });
+const pts = new Map(); let moved = 0, pinch = 0;
+canvas.addEventListener("pointerdown", e => { canvas.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]); moved = 0; canvas.classList.add("drag"); });
+canvas.addEventListener("pointermove", e => {
+  if (!pts.has(e.pointerId)) return;
+  const [ox, oy] = pts.get(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
+  if (pts.size === 2) {
+    const [a, b] = [...pts.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]), r = canvas.getBoundingClientRect();
+    if (pinch) zoomAt((a[0] + b[0]) / 2 - r.left, (a[1] + b[1]) / 2 - r.top, d / pinch);
+    pinch = d; moved = 99; return;
+  }
+  moved += Math.abs(e.clientX - ox) + Math.abs(e.clientY - oy);
+  view = { ...view, x: view.x + e.clientX - ox, y: view.y + e.clientY - oy }; anim = null; request();
+});
+const up = e => {
+  if (!pts.has(e.pointerId)) return;
+  pts.delete(e.pointerId); pinch = 0; canvas.classList.remove("drag");
+  if (moved < 5 && e.type === "pointerup") { const r = canvas.getBoundingClientRect(); pick(e.clientX - r.left, e.clientY - r.top); }
+};
+canvas.addEventListener("pointerup", up); canvas.addEventListener("pointercancel", up);
+canvas.addEventListener("dblclick", () => go(fit()));
+function pick(px, py) {
+  let best = null, bd = Infinity;
+  N.forEach((n, i) => {
+    if (n.k === "ring") return;
+    const [x, y, a] = at(n, view.z); if (a < 0.5) return;
+    const d = Math.hypot(sx(x) - px, sy(y) - py);
+    if (d < Math.max(8, dotPx(n, view.z) + 3) && d < bd) { best = n; bd = d; }
+  });
+  if (!best) { const d = Math.hypot(sx(0) - px, sy(0) - py); if (Math.abs(d - G.ring * view.z) < 6) best = byId.get("ring"); }
+  select(best);
+}
+function zoomTo(n) {
+  const need = n.st === 3 ? G.stages[2][1] : n.st === 1 ? G.stages[1][1] : view.z;
+  const z = Math.min(ZMAX, Math.max(view.z, need * 1.05));
+  go({ z, x: W / 2 - n.x * z, y: H / 2 - n.y * z });
+}
+
+// ---------------------------------------------------------------- the panel
+const info = document.getElementById("info"), copy = document.getElementById("copy"), copied = document.getElementById("copied");
+const el = (tag, text, cls) => { const x = document.createElement(tag); if (text != null) x.textContent = text; if (cls) x.className = cls; return x; };
+function select(n) {
+  sel = n; info.replaceChildren(); copied.textContent = "";
+  if (!n) { info.textContent = "Click a dot, or search for one."; copy.disabled = true; request(); return; }
+  info.append(el("b", n.label));
+  if (n.k === "agent") info.append(el("span", n.act ? "active" : "idle", "state" + (n.act ? " on" : "")));
+  const p = n.p ? byId.get(n.p) : null;
+  if (n.k === "part") info.append(el("div", `${n.t} in the chat map "${n.map}" (${p.label})`));
+  if (n.detail) info.append(el("div", n.detail));
+  if (n.file) { const a = el("a", "Open this chat map"); a.href = "./" + encodeURIComponent(n.file); const d = el("div"); d.append(a); info.append(d); }
+  copy.disabled = !n.resume;
+  request();
+}
+copy.addEventListener("click", () => {
+  if (!sel || !sel.resume) return;
+  const text = sel.resume, done = ok => { copied.textContent = ok ? "Copied" : "Could not copy: " + text; };
+  const fallback = () => { const t = el("textarea"); t.value = text; document.body.append(t); t.select(); let ok = false; try { ok = document.execCommand("copy"); } catch {} t.remove(); done(ok); };
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(() => done(true), fallback); else fallback();
+});
+
+// search: arrow keys move, Enter zooms to the node, Esc clears
+const q = document.getElementById("q"), results = document.getElementById("results");
+let hits = [], cur = -1;
+function showHits() {
+  results.replaceChildren();
+  hits.forEach((n, i) => {
+    const li = el("li"); li.id = "r" + i; li.setAttribute("role", "option"); li.setAttribute("aria-selected", i === cur ? "true" : "false");
+    li.append(el("b", n.label)); li.firstChild.style.fontWeight = "400";
+    li.append(el("span", n.k === "project" || n.k === "hub" || n.k === "ring" ? n.k : (byId.get(n.p) || {}).label));
+    li.addEventListener("click", () => { cur = i; choose(); });
+    results.append(li);
+  });
+  q.setAttribute("aria-expanded", hits.length ? "true" : "false");
+  if (cur >= 0) q.setAttribute("aria-activedescendant", "r" + cur); else q.removeAttribute("aria-activedescendant");
+}
+function choose() { const n = hits[cur]; if (!n) return; select(n); zoomTo(n); }
+q.addEventListener("input", () => {
+  const s = q.value.trim().toLowerCase();
+  hits = s ? N.filter(n => n.label.toLowerCase().includes(s)).sort((a, b) => a.st - b.st || a.label.length - b.label.length).slice(0, 12) : [];
+  cur = hits.length ? 0 : -1; showHits();
+});
+q.addEventListener("keydown", e => {
+  if (e.key === "ArrowDown" && hits.length) { cur = (cur + 1) % hits.length; showHits(); e.preventDefault(); }
+  else if (e.key === "ArrowUp" && hits.length) { cur = (cur - 1 + hits.length) % hits.length; showHits(); e.preventDefault(); }
+  else if (e.key === "Enter") { choose(); e.preventDefault(); }
+  else if (e.key === "Escape") { q.value = ""; hits = []; cur = -1; showHits(); }
+});
+
+// the status line, the snapshot note, and a real list of the dots in view
+const pad = v => String(v).padStart(2, "0");
+const built = new Date(Date.parse(G.generated + ":00Z"));
+const builtAt = `${pad(built.getHours())}:${pad(built.getMinutes())}`;
+document.getElementById("snap").textContent = `A snapshot built at ${builtAt}. Run tongs-map.mjs again to refresh it.`;
+document.getElementById("idleDot").style.background = C.idle;
+if (G.glowMore) { const m = document.getElementById("more"); m.hidden = false; m.textContent = `+${G.glowMore} more active`; }
+function status() {
+  document.getElementById("status").textContent = `${G.projects} projects, ${G.active} chat${G.active === 1 ? "" : "s"} active, built ${builtAt}`;
+}
+let listTimer = 0;
+function listVisible() {
+  if (listTimer) return; // at most four times a second, even while the glow keeps drawing
+  listTimer = setTimeout(() => {
+    listTimer = 0;
+    const box = document.getElementById("visible"), z = view.z;
+    const seen = N.filter(n => { if (n.k === "ring") return false; const [x, y, a] = at(n, z); return a >= 0.5 && onScreen(sx(x), sy(y), 0); })
+      .sort((a, b) => a.st - b.st || b.r - a.r || (a.id < b.id ? -1 : 1)).slice(0, 40);
+    box.replaceChildren(...seen.map(n => { const b = el("button", n.label); b.setAttribute("role", "listitem"); b.addEventListener("click", () => { select(n); zoomTo(n); }); return b; }));
+  }, 250);
+}
+const toggle = document.getElementById("toggle"), panel = document.getElementById("panel");
+if (matchMedia("(max-width:700px)").matches) panel.classList.add("closed");
+toggle.addEventListener("click", () => { const open = panel.classList.toggle("closed") === false; toggle.setAttribute("aria-expanded", String(open)); toggle.textContent = open ? "Hide panel" : "Show panel"; });
+
+// for measuring: draws n frames while panning and zooming, returns the slowest in ms
+window.tongsPerf = n => { const v = { ...view }, times = []; for (let i = 0; i < n; i++) { view = { z: v.z * (1 + i / n * 3), x: v.x - i * 3, y: v.y - i * 2 }; const t = performance.now(); draw(i * 16); times.push(performance.now() - t); } view = v; request(); return { max: Math.max(...times), mean: times.reduce((s, x) => s + x, 0) / n }; };
+
+new ResizeObserver(() => { const first = !W; resize(); if (first) view = fit(); }).observe(canvas);
+if (document.fonts) document.fonts.load("12px 'IBM Plex Mono'").then(request, () => {});
+</script>
+</body>
+</html>

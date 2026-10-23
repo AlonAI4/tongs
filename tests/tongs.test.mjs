@@ -1,0 +1,216 @@
+// Tests for scripts/tongs-map.mjs, with a small fake tracker, fake chat maps and fake logs in a temp
+// folder (never your real ones).
+//   node --test tests/*.test.mjs
+import { test, after } from "node:test";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { readTracker, readMaps, buildMap, renderPage, labelBox, stageAlpha, indexLines, resumePrompt, contrast, projectColor, COLORS, LIMITS } from "../scripts/tongs-map.mjs";
+
+const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "tongs-map.mjs");
+const TEMPLATE = readFileSync(join(dirname(SCRIPT), "tongs-template.html"), "utf8");
+const TMP = mkdtempSync(join(tmpdir(), "tongs-map-"));
+after(() => rmSync(TMP, { recursive: true, force: true }));
+let n = 0;
+const newDir = name => { const d = join(TMP, name + ++n); mkdirSync(d, { recursive: true }); return d; };
+
+const page = data => `<!doctype html><title>x</title><script>throw new Error("never run")</script>` +
+  `<script type="application/json" id="graph-data">${JSON.stringify(data).replace(/</g, "\\u003c")}</script>`;
+const chatMap = (count, extra = {}) => ({
+  title: "A map", nodes: Array.from({ length: count }, (_, i) => ({ id: "n" + i, label: i ? "node " + i : "the goal", type: i ? "done" : "goal" })),
+  links: Array.from({ length: count - 1 }, (_, i) => ({ from: "n0", to: "n" + (i + 1) })), ...extra,
+});
+
+function fakeTracker(ids = ["forge", "zenith-mc", "tongs"]) {
+  const d = newDir("tracker");
+  mkdirSync(join(d, "projects")); mkdirSync(join(d, "chat-maps"));
+  writeFileSync(join(d, "projects", "index.json"), JSON.stringify({ projects: [...ids.map(id => ({ id, status: "ongoing", file: id + ".json" })), { id: "secret", locked: true, file: "secret.json" }] }));
+  ids.forEach((id, i) => writeFileSync(join(d, "projects", id + ".json"), JSON.stringify({ meta: { title: id.toUpperCase(), updated: "2026-10-1" + i } })));
+  writeFileSync(join(d, "projects", "secret.json"), "ENCRYPTED");
+  writeFileSync(join(d, "chat-maps", "GROUP-CHAT.md"), "- PRIVATE-BOARD-TEXT\n");
+  return d;
+}
+const agent = (id, project, extra = {}) => ({ id, sub: false, parentKey: null, project, fresh: 5000, cached: 100, models: new Map([["opus 5.5", 1]]), paths: new Set(), last: "2026-10-23T10:00", first: "2026-10-23T09:00", ...extra });
+const NOW = Date.parse("2026-10-23T12:00:00Z");
+
+function sample() {
+  const tracker = readTracker(fakeTracker());
+  const maps = [
+    { name: "forge-1", file: "forge-1.html", json: "forge-1.json", title: "Forge one", project: "forge", updated: "2026-10-20", ...chatMap(9) },
+    { name: "zenith-mc", file: "zenith-mc.html", json: null, title: "Zenith", project: null, updated: "2026-10-21", ...chatMap(5) },
+    { name: "scratch", file: "scratch.html", json: null, title: "Scratch", project: "dads-site", updated: "2026-10-22", ...chatMap(3) },
+  ];
+  const agents = [
+    agent("a1", "forge", { paths: new Set(["~/tongs/scripts/a.mjs", "~/ai-tracker/projects/forge.json"]), last: "2026-10-23T11:55" }),
+    agent("a2", "tongs", { paths: new Set(["~/tongs/scripts/a.mjs", "~/.claude/x.md", "~/ai-tracker/projects/forge.json"]) }),
+    agent("a3", "zenith-mc", { paths: new Set(["~/ai-tracker/projects/forge.json"]) }),
+    agent("a4", "somewhere-else", { paths: new Set(["~/tongs/scripts/a.mjs"]) }),
+    agent("s1", null, { sub: true, parentKey: "a1" }),
+  ];
+  return { tracker, maps, agents, now: NOW };
+}
+
+test("reads the tracker's projects and meta, a locked one by id only, and the board's time but never its text", () => {
+  const t = readTracker(fakeTracker());
+  assert.deepEqual(t.projects.map(p => [p.id, p.title, p.locked]), [["forge", "FORGE", false], ["zenith-mc", "ZENITH-MC", false], ["tongs", "TONGS", false], ["secret", "secret", true]]);
+  assert.match(t.board, /^\d{4}-\d\d-\d\dT\d\d:\d\d$/);
+  assert.ok(!JSON.stringify(buildMap({ tracker: t, now: NOW })).includes("PRIVATE-BOARD-TEXT"));
+  assert.deepEqual(readTracker(join(TMP, "nothing")).projects, []);
+});
+
+test("reads chat maps from their pages as data: old agent and super pages, latest and tongs pages are skipped", () => {
+  const d = newDir("maps");
+  writeFileSync(join(d, "forge-1.html"), page(chatMap(4, { project: "forge" })));
+  writeFileSync(join(d, "forge-1.json"), "{}");
+  for (const f of ["latest.html", "tongs.html"]) writeFileSync(join(d, f), page(chatMap(4)));
+  writeFileSync(join(d, "agents2.html"), page({ nodes: [{ id: "p", type: "project", x: 1, y: 1, r: 1 }] }));
+  writeFileSync(join(d, "broken.html"), '<script type="application/json" id="graph-data">{not json</script>');
+  const { maps, problems } = readMaps(d);
+  assert.deepEqual(maps.map(m => [m.name, m.json, m.project, m.nodes.length, m.links.length]), [["forge-1", "forge-1.json", "forge", 4, 3]]);
+  assert.deepEqual(problems, ["broken.html: its graph data could not be read"]);
+});
+
+test("same inputs give the same bytes", () => {
+  const a = renderPage(buildMap(sample())), b = renderPage(buildMap(sample()));
+  assert.equal(a, b);
+});
+
+test("hub is the tracker, the ring is the group chat, and every project links to the ring", () => {
+  const g = buildMap(sample());
+  const hub = g.nodes.find(x => x.k === "hub"), ring = g.nodes.find(x => x.k === "ring");
+  assert.equal(hub.label, "the tracker");
+  assert.equal(ring.label, "group chat");
+  const projects = g.nodes.map((x, i) => [x, i]).filter(([x]) => x.k === "project");
+  for (const [, i] of projects) assert.ok(g.edges.some(e => e[0] === i && e[2] === "ring"));
+  assert.equal(g.projects, 4, "forge, zenith-mc, tongs and the locked one; 'other' is not a tracker project");
+});
+
+test("'other' folding: a map or log folder not on the tracker goes to 'other', never its own project", () => {
+  const g = buildMap(sample());
+  const labels = g.nodes.filter(x => x.k === "project").map(x => x.label);
+  assert.ok(labels.includes("other"));
+  assert.ok(!labels.some(l => /dads|somewhere/i.test(l)));
+  const other = g.nodes.find(x => x.id === "p:~other");
+  assert.equal(g.nodes.filter(x => x.p === other.id && x.k === "part").length, 3, "the scratch map");
+  assert.equal(g.nodes.filter(x => x.p === other.id && x.k === "agent").length, 1, "the agent from somewhere-else");
+  // a map with no project field joins the project its name matches
+  assert.equal(g.nodes.filter(x => x.p === "p:zenith-mc" && x.k === "part").length, 5);
+  // a subagent goes where its chat is
+  assert.equal(g.nodes.find(x => x.id === "a:s1").p, "p:forge");
+});
+
+test("inferred links only from shared file paths, never from ~/.claude, ~/ai-tracker or 'other'; drawn dashed and labelled", () => {
+  const g = buildMap(sample());
+  const inferred = g.edges.filter(e => e[2] === "inferred").map(e => [g.nodes[e[0]].id, g.nodes[e[1]].id, e[3]]);
+  assert.deepEqual(inferred, [["p:forge", "p:tongs", { n: 1, files: ["~/tongs/scripts/a.mjs"] }]]);
+  assert.match(TEMPLATE, /ctx\.setLineDash\(kind === "inferred" \? \[5, 4\] : \[\]\)/);
+  assert.match(TEMPLATE, /ctx\.fillText\("inferred"/);
+  // only inferred lines are dashed
+  assert.equal((TEMPLATE.match(/setLineDash\(\[\d/g) || []).length, 0);
+});
+
+test("no two project footprints overlap, nothing sits inside the ring, and projects are not on one circle", () => {
+  const s = sample();
+  for (let i = 0; i < 20; i++) s.tracker.projects.push({ id: "p" + i, title: "Project " + i, updated: null, status: null, locked: false });
+  const g = buildMap(s);
+  const P = g.nodes.filter(x => x.k === "project");
+  for (let i = 0; i < P.length; i++) {
+    assert.ok(Math.hypot(P[i].x, P[i].y) - P[i].r > g.ring, P[i].id + " is inside the ring");
+    for (let j = i + 1; j < P.length; j++) assert.ok(Math.hypot(P[i].x - P[j].x, P[i].y - P[j].y) >= P[i].r + P[j].r + 20, P[i].id + " is too close to " + P[j].id);
+  }
+  const radii = P.map(p => Math.hypot(p.x, p.y)), spread = Math.max(...radii) - Math.min(...radii);
+  assert.ok(spread > 100, "projects at many distances from the hub, not on a circle");
+});
+
+test("labels never collide at any zoom level the page uses, and every project is labelled at the first screen's zoom", () => {
+  const s = sample();
+  for (let i = 0; i < 10; i++) s.tracker.projects.push({ id: "p" + i, title: "A LONGER PROJECT NAME " + i, updated: null, status: null, locked: false });
+  const g = buildMap(s);
+  g.levels.forEach((z, i) => {
+    const boxes = g.nodes.filter(x => x.lv[i] !== ".").map(x => labelBox(x, z, Number(x.lv[i]), g.zRef));
+    for (let a = 0; a < boxes.length; a++) for (let b = a + 1; b < boxes.length; b++) {
+      const p = boxes[a], q = boxes[b];
+      assert.ok(!(p.x0 < q.x1 && q.x0 < p.x1 && p.y0 < q.y1 && q.y0 < p.y1), `labels collide at level ${i}`);
+    }
+    // a part or agent is only labelled once it has fully faded in at its final place
+    for (const x of g.nodes) if (x.lv[i] !== ".") assert.equal(stageAlpha(x.st, z, g.stages), 1);
+  });
+  // the page fits the projects at about 0.7 of the reference zoom on a laptop screen
+  assert.ok(g.nodes.filter(x => x.k === "project").every(p => p.lv[3] !== "."), "every project labelled at level 3");
+});
+
+test("the resume prompt and the index.md lines", () => {
+  assert.equal(resumePrompt("~/.claude/tongs-maps/forge-1.json", "n3"), "Read ~/.claude/tongs-maps/forge-1.json, then continue from node n3.");
+  const s = sample(), g = buildMap(s);
+  assert.equal(g.nodes.find(x => x.id === "m:forge-1:n3").resume, "Read ~/.claude/tongs-maps/forge-1.json, then continue from node n3.");
+  assert.equal(g.nodes.find(x => x.id === "m:zenith-mc:n0").resume, "Read ~/.claude/tongs-maps/zenith-mc.html, then continue from node n0.", "the page when there is no JSON");
+  s.maps[0].nodes[0].label = "a goal | with a pipe\nand a newline";
+  assert.deepEqual(indexLines(s.maps, "~/.claude/tongs-maps"), [
+    "- FORGE | ~/.claude/tongs-maps/forge-1.json | a goal with a pipe and a newline | updated 2026-10-20",
+    "- ZENITH-MC | ~/.claude/tongs-maps/zenith-mc.html | the goal | updated 2026-10-21",
+    "- other | ~/.claude/tongs-maps/scratch.html | the goal | updated 2026-10-22",
+  ]);
+});
+
+test("active: the newest agents glow, at most 30; orange is never a project colour; colours pass contrast", () => {
+  const s = sample();
+  for (let i = 0; i < 35; i++) s.agents.push(agent("x" + i, "forge", { last: `2026-10-23T11:${String(50 + (i % 10)).padStart(2, "0")}` }));
+  const g = buildMap(s);
+  const act = g.nodes.filter(x => x.act);
+  assert.equal(act.filter(x => x.act === 1).length, LIMITS.glow);
+  assert.equal(g.glowMore, act.length - LIMITS.glow);
+  assert.ok(!g.nodes.find(x => x.id === "a:a2").act, "two hours old is idle");
+  // exactly 15 minutes ago still counts; 16 does not
+  const one = l => buildMap({ ...sample(), agents: [agent("q", "forge", { last: l })] }).nodes.find(x => x.id === "a:q").act;
+  assert.equal(one("2026-10-23T11:45"), 1);
+  assert.equal(one("2026-10-23T11:44"), undefined);
+  for (let i = 0; i < 24; i++) {
+    const c = projectColor(i), h = /^#(..)(..)(..)$/.exec(c).slice(1).map(x => parseInt(x, 16));
+    assert.ok(contrast(c, COLORS.bg) >= 3, c + " contrast");
+    assert.ok(!(h[0] > 200 && h[1] > 90 && h[1] < 180 && h[2] < 90), c + " looks orange");
+  }
+  assert.ok(contrast(COLORS.text, COLORS.bg) >= 4.5);
+  assert.ok(contrast(COLORS.dim, COLORS.bg) >= 4.5);
+  assert.ok(contrast(COLORS.idle, COLORS.bg) >= 3);
+  assert.ok(contrast(COLORS.active, COLORS.bg) >= 3);
+  assert.match(TEMPLATE, /n\.k === "agent" \? \(n\.act \? C\.active : C\.idle\)/);
+  assert.match(TEMPLATE, /info\.append\(el\("span", n\.act \? "active" : "idle"/, "active is said in words too");
+});
+
+test("the page: CSP with no network, glow from a sprite, reduced motion respected", () => {
+  assert.match(TEMPLATE, /content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:"/);
+  assert.doesNotMatch(TEMPLATE, /shadowBlur|innerHTML/);
+  assert.match(TEMPLATE, /prefers-reduced-motion: reduce/);
+  const urls = (TEMPLATE.match(/https?:\/\/[^\s"'<>)]+/g) || []);
+  assert.deepEqual(urls, []);
+});
+
+test("command line: writes the page and index.md with ~ paths only; no home path, prompts, session ids or board text", () => {
+  const home = newDir("zqhome");
+  const tracker = fakeTracker(), maps = join(home, ".claude", "tongs-maps"), logs = join(home, ".claude", "projects");
+  mkdirSync(maps, { recursive: true });
+  writeFileSync(join(maps, "forge-1.html"), page(chatMap(4, { project: "forge" })));
+  writeFileSync(join(maps, "forge-1.json"), "{}");
+  const cwd = join(home, "forge"), log = join(logs, "-zq-forge", "0f8fad5b-d9cb-469f-a165-70867728950e.jsonl");
+  mkdirSync(dirname(log), { recursive: true });
+  writeFileSync(log, JSON.stringify({ type: "assistant", requestId: "r1", cwd, timestamp: "2026-10-23T10:00:00Z",
+    message: { id: "m1", role: "assistant", model: "claude-opus-5-5", content: [{ type: "text", text: "SECRET-PROMPT-TEXT" }, { type: "tool_use", id: "t1", name: "Read", input: { file_path: cwd + "/a.js" } }],
+      usage: { input_tokens: 900, output_tokens: 5, cache_read_input_tokens: 10 } } }) + "\n");
+  const out = join(maps, "tongs.html");
+  const r = spawnSync(process.execPath, [SCRIPT, "--no-open", "--tracker", tracker, "--maps", maps, "--logs", logs, "--out", out], { env: { ...process.env, HOME: home }, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Tongs map: 4 projects, 1 chat maps \(4 nodes\), 1 agents, 0 chats active/);
+  assert.match(r.stdout, /Wrote {2}~\/\.claude\/tongs-maps\/tongs\.html/);
+  const html = readFileSync(out, "utf8"), index = readFileSync(join(maps, "index.md"), "utf8");
+  assert.match(index, /^- FORGE \| ~\/\.claude\/tongs-maps\/forge-1\.json \| the goal \| updated /m);
+  for (const text of [html, index]) for (const bad of [home, "/Users/", "SECRET-PROMPT-TEXT", "0f8fad5b", "PRIVATE-BOARD-TEXT", "never run"]) assert.ok(!text.includes(bad), "must not contain " + bad);
+  const bad = spawnSync(process.execPath, [SCRIPT, "--out", "--no-open"], { encoding: "utf8" });
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /--out needs a value/);
+  const none = spawnSync(process.execPath, [SCRIPT, "--no-open", "--tracker", newDir("empty"), "--out", join(TMP, "x.html")], { env: { ...process.env, HOME: home }, encoding: "utf8" });
+  assert.equal(none.status, 1);
+  assert.match(none.stderr, /no projects found/);
+});
