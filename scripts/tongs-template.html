@@ -198,7 +198,7 @@ function draw(t) {
     ctx.strokeStyle = kind === "inferred" ? C.dim : kind === "ring" ? C.ring : (C.projects[a.c] || C.other);
     ctx.setLineDash(kind === "inferred" ? [5, 4] : []);
     ctx.beginPath(); ctx.moveTo(X1, Y1); ctx.lineTo(X2, Y2); ctx.stroke();
-    if (kind === "inferred" && la > 0.5) { ctx.fillStyle = C.dim; ctx.font = "10px 'IBM Plex Mono', monospace"; ctx.textAlign = "center"; ctx.fillText("inferred", (X1 + X2) / 2, (Y1 + Y2) / 2 - 4); }
+    if (kind === "inferred" && la > 0.5) { ctx.textBaseline = "alphabetic"; ctx.fillStyle = C.dim; ctx.font = "10px 'IBM Plex Mono', monospace"; ctx.textAlign = "center"; ctx.fillText("inferred", (X1 + X2) / 2, (Y1 + Y2) / 2 - 4); }
   }
   ctx.setLineDash([]); ctx.globalAlpha = 1;
   // dots
@@ -253,9 +253,14 @@ function zoomAt(px, py, f) {
   const z = Math.max(ZMIN, Math.min(ZMAX, view.z * f));
   view = { z, x: px - (px - view.x) * (z / view.z), y: py - (py - view.y) * (z / view.z) }; anim = null; request();
 }
-canvas.addEventListener("wheel", e => { e.preventDefault(); const r = canvas.getBoundingClientRect(); zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * (e.deltaMode ? 0.05 : 0.0015))); }, { passive: false });
+canvas.addEventListener("wheel", e => { e.preventDefault(); const r = canvas.getBoundingClientRect(); zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * [0.0015, 0.05, 1][e.deltaMode] || 0.0015)); }, { passive: false });
 const pts = new Map(); let moved = 0, pinch = 0;
-canvas.addEventListener("pointerdown", e => { canvas.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]); moved = 0; canvas.classList.add("drag"); });
+canvas.addEventListener("pointerdown", e => {
+  if (e.button > 0) return; // left button or touch only
+  canvas.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
+  moved = pts.size > 1 ? 99 : 0; // a second finger never counts as a tap
+  canvas.classList.add("drag");
+});
 canvas.addEventListener("pointermove", e => {
   if (!pts.has(e.pointerId)) return;
   const [ox, oy] = pts.get(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
@@ -359,7 +364,7 @@ function listVisible() {
     const box = document.getElementById("visible"), z = view.z;
     const seen = N.filter(n => { if (n.k === "ring") return false; const [x, y, a] = at(n, z); return a >= 0.5 && onScreen(sx(x), sy(y), 0); })
       .sort((a, b) => a.st - b.st || b.r - a.r || (a.id < b.id ? -1 : 1)).slice(0, 40);
-    box.replaceChildren(...seen.map(n => { const b = el("button", n.label); b.setAttribute("role", "listitem"); b.addEventListener("click", () => { select(n); zoomTo(n); }); return b; }));
+    box.replaceChildren(...seen.map(n => { const w = el("div"), b = el("button", n.label); w.setAttribute("role", "listitem"); b.addEventListener("click", () => { select(n); zoomTo(n); }); w.append(b); return w; }));
   }, 250);
 }
 const toggle = document.getElementById("toggle"), panel = document.getElementById("panel");

@@ -76,8 +76,10 @@ export function readTracker(dir) {
   const projects = [];
   let index = null;
   try { index = JSON.parse(readFileSync(join(dir, "projects", "index.json"), "utf8")); } catch {}
+  const seen = new Set();
   for (const p of index && Array.isArray(index.projects) ? index.projects : []) {
-    if (!p || !str(p.id)) continue;
+    if (!p || !str(p.id) || seen.has(p.id)) continue;
+    seen.add(p.id);
     let meta = {};
     // a locked project is encrypted: only its id is known
     if (!p.locked && typeof p.file === "string" && /^[\w.-]+\.json$/.test(p.file)) {
@@ -105,14 +107,16 @@ export function readMaps(dir) {
     } catch { problems.push(file + ": its graph data could not be read"); continue; }
     const all = data && Array.isArray(data.nodes) ? data.nodes.filter(n => n && typeof n === "object") : [];
     if (all.some(n => typeof n.x === "number" || n.type === "map")) continue; // an old agent or super graph page
-    const nodes = all.filter(n => str(n.id) && str(n.label) && TYPES.includes(n.type));
+    const ids0 = new Set(), text = v => (typeof v === "number" ? String(v) : str(v));
+    const nodes = all.filter(n => text(n.id) && text(n.label) && TYPES.includes(n.type) && !ids0.has(text(n.id)) && ids0.add(text(n.id)))
+      .map(n => ({ id: text(n.id), label: text(n.label), type: n.type }));
     if (!nodes.length) { problems.push(file + ": no nodes"); continue; }
     const ids = new Set(nodes.map(n => n.id)), name = basename(file, ".html");
     maps.push({
       name, file, json: existsSync(join(dir, name + ".json")) ? name + ".json" : null,
       title: str(data.title) || name, project: str(data.project), updated: day(data.updated) || day(new Date(mtime).toISOString()),
-      nodes: nodes.map(n => ({ id: n.id, label: n.label.trim(), type: n.type })),
-      links: (Array.isArray(data.links) ? data.links : []).filter(l => l && ids.has(l.from) && ids.has(l.to) && l.from !== l.to).map(l => ({ from: l.from, to: l.to })),
+      nodes,
+      links: (Array.isArray(data.links) ? data.links : []).map(l => l && { from: text(l.from), to: text(l.to) }).filter(l => l && ids.has(l.from) && ids.has(l.to) && l.from !== l.to),
     });
   }
   return { maps, problems };
@@ -126,7 +130,7 @@ export function indexLines(maps, mapsDir) {
   const one = s => s.replace(/[\r\n|]+/g, " ").replace(/\s+/g, " ").trim();
   return maps.map(m => {
     const goal = (m.nodes.find(n => n.type === "goal") || m.nodes[0]).label;
-    return `- ${m.projectLabel || m.project || "other"} | ${mapsDir}/${m.json || m.file} | ${one(goal)} | updated ${m.updated}`;
+    return `- ${one(m.projectLabel || m.project || "other")} | ${mapsDir}/${m.json || m.file} | ${one(goal)} | updated ${m.updated}`;
   });
 }
 
@@ -215,7 +219,7 @@ export function buildMap({ tracker, maps = [], agents = [], mapsDir = "~/.claude
     const shown = list.slice(0, LIMITS.agentsPerProject), ids = new Set(shown.map(a => a.id));
     p.more = list.length - shown.length;
     for (const a of shown) {
-      const mods = [...a.models.entries()].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1)).map(e => e[0]);
+      const mods = [...(a.models || new Map()).entries()].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1)).map(e => e[0]);
       const act = isActive(a);
       const node = { id: "a:" + a.id, k: "agent", sub: a.sub ? 1 : 0, label: `${mods[0] || "other"} · ${fmt(a.fresh)}`, last: a.last,
         detail: `${a.sub ? "Subagent" : "Chat"} in ${p.label}. Models: ${mods.join(", ") || "other"}. Fresh tokens ${fmt(a.fresh)}, cached ${fmt(a.cached)}.` +
@@ -235,7 +239,7 @@ export function buildMap({ tracker, maps = [], agents = [], mapsDir = "~/.claude
     const a = shared.get(projects[i]), b = shared.get(projects[j]);
     if (!a || !b) continue;
     const both = [...a].filter(x => b.has(x)).sort();
-    if (both.length) edges.push([projects[i].id, projects[j].id, "inferred", { n: both.length, files: both.slice(0, 5) }]);
+    if (both.length) edges.push([projects[i].id, projects[j].id, "inferred", { n: both.length }]);
   }
   for (const p of list) edges.push([p.id, "ring", "ring"]);
 
@@ -286,12 +290,14 @@ export function buildMap({ tracker, maps = [], agents = [], mapsDir = "~/.claude
     { id: "ring", k: "ring", label: "group chat", x: 0, y: -RING, r: 0, st: 0,
       detail: "The group chat: the board where your chats leave messages for each other. " + (tracker.board ? `It last changed ${tracker.board.replace("T", " ")} UTC.` : "No board found.") },
   ];
+  const sharedWith = p => edges.filter(e => e[2] === "inferred" && (e[0] === p.id || e[1] === p.id))
+    .map(e => `${list.find(q => q.id === (e[0] === p.id ? e[1] : e[0])).label} (${e[3].n} file${e[3].n === 1 ? "" : "s"})`);
   list.forEach((p, i) => {
-    const parts = p.kids.filter(c => c.k === "part").length, ags = p.kids.length - parts;
+    const parts = p.kids.filter(c => c.k === "part").length, ags = p.kids.length - parts, sw = sharedWith(p);
     nodes.push({ id: p.id, k: "project", label: p.label, x: round(p.x), y: round(p.y), r: round(p.r), st: 0, c: i,
       detail: p === other ? `Chats and maps from folders that are not on the tracker. ${parts} map nodes, ${ags} agents shown.` :
         `Project${p.src.locked ? " (locked on the tracker)" : ""}. ${parts} map nodes, ${ags} agents shown` + (p.more ? `, ${p.more} more not shown` : "") + "." +
-        (p.src.updated ? ` Tracker updated ${p.src.updated}.` : "") });
+        (p.src.updated ? ` Tracker updated ${p.src.updated}.` : "") + (sw.length ? ` Shares files with ${sw.join(", ")} (inferred).` : "") });
   });
   const pIndex = new Map(list.map((p, i) => [p.id, i]));
   for (const p of list) for (const c of p.kids) {

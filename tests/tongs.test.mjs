@@ -71,6 +71,11 @@ test("reads chat maps from their pages as data: old agent and super pages, lates
   const { maps, problems } = readMaps(d);
   assert.deepEqual(maps.map(m => [m.name, m.json, m.project, m.nodes.length, m.links.length]), [["forge-1", "forge-1.json", "forge", 4, 3]]);
   assert.deepEqual(problems, ["broken.html: its graph data could not be read"]);
+  // numeric ids are kept as text; a repeated id is read once
+  writeFileSync(join(d, "nums.html"), page({ nodes: [{ id: 1, label: "goal", type: "goal" }, { id: 2, label: 7, type: "done" }, { id: 2, label: "again", type: "done" }], links: [{ from: 1, to: 2 }] }));
+  const nums = readMaps(d).maps.find(m => m.name === "nums");
+  assert.deepEqual(nums.nodes.map(x => x.id + ":" + x.label), ["1:goal", "2:7"]);
+  assert.deepEqual(nums.links, [{ from: "1", to: "2" }]);
 });
 
 test("same inputs give the same bytes", () => {
@@ -105,7 +110,9 @@ test("'other' folding: a map or log folder not on the tracker goes to 'other', n
 test("inferred links only from shared file paths, never from ~/.claude, ~/ai-tracker or 'other'; drawn dashed and labelled", () => {
   const g = buildMap(sample());
   const inferred = g.edges.filter(e => e[2] === "inferred").map(e => [g.nodes[e[0]].id, g.nodes[e[1]].id, e[3]]);
-  assert.deepEqual(inferred, [["p:forge", "p:tongs", { n: 1, files: ["~/tongs/scripts/a.mjs"] }]]);
+  assert.deepEqual(inferred, [["p:forge", "p:tongs", { n: 1 }]]);
+  assert.ok(!JSON.stringify(g).includes("scripts/a.mjs"), "file names never reach the page");
+  assert.match(g.nodes.find(x => x.id === "p:forge").detail, /Shares files with TONGS \(1 file\) \(inferred\)/);
   assert.match(TEMPLATE, /ctx\.setLineDash\(kind === "inferred" \? \[5, 4\] : \[\]\)/);
   assert.match(TEMPLATE, /ctx\.fillText\("inferred"/);
   // only inferred lines are dashed
@@ -148,9 +155,10 @@ test("the resume prompt and the index.md lines", () => {
   assert.equal(g.nodes.find(x => x.id === "m:forge-1:n3").resume, "Read ~/.claude/tongs-maps/forge-1.json, then continue from node n3.");
   assert.equal(g.nodes.find(x => x.id === "m:zenith-mc:n0").resume, "Read ~/.claude/tongs-maps/zenith-mc.html, then continue from node n0.", "the page when there is no JSON");
   s.maps[0].nodes[0].label = "a goal | with a pipe\nand a newline";
+  s.maps[1].projectLabel = "ZENITH|\nMC";
   assert.deepEqual(indexLines(s.maps, "~/.claude/tongs-maps"), [
     "- FORGE | ~/.claude/tongs-maps/forge-1.json | a goal with a pipe and a newline | updated 2026-10-20",
-    "- ZENITH-MC | ~/.claude/tongs-maps/zenith-mc.html | the goal | updated 2026-10-21",
+    "- ZENITH MC | ~/.claude/tongs-maps/zenith-mc.html | the goal | updated 2026-10-21",
     "- other | ~/.claude/tongs-maps/scratch.html | the goal | updated 2026-10-22",
   ]);
 });

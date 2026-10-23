@@ -82,7 +82,8 @@ export function modelName(m) {
 export async function readLogs(logsDir, { days = 14, home = homedir() } = {}) {
   const cutoff = Date.now() - days * 86400000;
   // Oldest file first, so a resumed chat that replays an older chat's messages cannot take them from it.
-  const files = walk(logsDir).map(f => [f, statSync(f).mtimeMs]).filter(([, t]) => t >= cutoff)
+  const mtime = f => { try { return statSync(f).mtimeMs; } catch { return -Infinity; } }; // deleted since the walk: skipped
+  const files = walk(logsDir).map(f => [f, mtime(f)]).filter(([, t]) => t >= cutoff)
     .sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1)).map(([f]) => f);
   const seen = new Set();            // message.id + requestId, global
   const agents = new Map();          // key -> agent
