@@ -44,9 +44,9 @@ h2{font:400 .7rem var(--f-mono);letter-spacing:.08em;text-transform:uppercase;co
 svg#g{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
 circle,path,line{vector-effect:non-scaling-stroke}
 .c-project{fill:var(--well-1);stroke:var(--ink-2);stroke-width:1.6}
-.c-group{fill:var(--well-1);stroke:var(--ink-dim);stroke-width:1.2;stroke-dasharray:6 4}
+.c-group{fill:none;stroke:none} /* still packed, never drawn: the only ring is the project's */
 .c-folder{fill:var(--well-2);stroke:var(--line);stroke-width:1}
-.c-small{fill:none;stroke:var(--ink-dim);stroke-width:1.2;stroke-dasharray:3 3}
+.c-small{fill:var(--idle);fill-opacity:.35;stroke:none}
 .c-chat{stroke:var(--ground);stroke-width:1}
 .c-sub{fill-opacity:.3;stroke-width:1.6}
 .node{cursor:pointer}
@@ -77,7 +77,7 @@ circle,path,line{vector-effect:non-scaling-stroke}
     <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="currentColor"/></svg>chat</div>
     <div class="key"><svg viewBox="0 0 16 16"><circle cx="7" cy="9" r="5" fill="currentColor"/><circle cx="12" cy="4" r="3.5" fill="currentColor"/></svg>chat with subagents (number)</div>
     <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="currentColor" fill-opacity=".3" stroke="currentColor" stroke-width="1.5"/></svg>subagent</div>
-    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 2"/></svg>small chats folded together</div>
+    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="currentColor" fill-opacity=".35"/></svg>small chats folded into one faint dot</div>
     <div class="key"><svg viewBox="0 0 16 16"><path d="M1 12Q8 2 15 12" fill="none" stroke="currentColor" stroke-width="2"/></svg>chats of one project working in another</div>
     <h2>Orange was working when made</h2>
     <div id="models"></div>
@@ -115,6 +115,11 @@ circle,path,line{vector-effect:non-scaling-stroke}
     " smaller chats are folded into one dashed circle per project. The " + G.limits.projects + " busiest projects are top-level circles; the rest sit in \"smaller projects\". Up to " +
     G.limits.foldersPerAgent + " folders per chat.";
 
+  // ---------- glow: a blur of the orange shape under itself, sized to each circle
+  const defs = el("defs", {}, svg), glow = el("filter", {id:"glow", x:"-60%", y:"-60%", width:"220%", height:"220%", primitiveUnits:"objectBoundingBox"}, defs);
+  el("feGaussianBlur", {in:"SourceGraphic", stdDeviation:"0.12", result:"b"}, glow);
+  const merge = el("feMerge", {}, glow); el("feMergeNode", {in:"b"}, merge); el("feMergeNode", {in:"SourceGraphic"}, merge);
+
   // ---------- layers
   const gWells = el("g", {}, svg), gBridges = el("g", {}, svg), gLeaves = el("g", {}, svg), gLines = el("g", {}, svg), gSubs = el("g", {}, svg), gLabels = el("g", {}, svg);
   const view = new Map(); // id -> {n, g, label, badge}
@@ -137,7 +142,7 @@ circle,path,line{vector-effect:non-scaling-stroke}
     const g = el("g", {class:"node" + (n.overlay ? " off" : ""), tabindex:"0", role:"button", "aria-label":n.type + ": " + n.label}, layer);
     const cls = {project:"c-project", group:"c-group", folder:"c-folder", small:"c-small", chat:"c-chat", subagent:"c-chat c-sub"}[n.type];
     const a = {class:"shape " + cls, cx:n.x, cy:n.y, r:n.r};
-    if (isLeaf(n)) { a.fill = stateColour(n); if (n.type === "subagent") a.style = "stroke:" + stateColour(n); }
+    if (isLeaf(n)) { a.fill = stateColour(n); if (n.type === "subagent") a.style = "stroke:" + stateColour(n); if (ACTIVE.has(n.id)) a.filter = "url(#glow)"; }
     el("circle", a, g);
     let badge = null;
     if (n.subs) {

@@ -345,3 +345,13 @@ test("a resumed chat that replays older messages does not take them from the old
   assert.deepEqual(Object.values(byKey).sort((x, y) => y - x), [905, 15]);
   assert.equal(agents.find(a => a.fresh === 905).first, "2026-10-23T10:00");
 });
+
+test("looks: the group and fold circles draw no ring, only active circles glow", () => {
+  const html = readFileSync(join(dirname(SCRIPT), "agents-template.html"), "utf8");
+  assert.match(html, /\.c-group\{fill:none;stroke:none\}/);
+  assert.match(html, /\.c-small\{[^}]*stroke:none\}/);
+  assert.doesNotMatch(html, /\.c-[a-z]+\{[^}]*dasharray/); // no dashed circle left (hover lines may still be dashed)
+  assert.match(html, /el\("filter", \{id:"glow"/);
+  assert.equal((html.match(/url\(#glow\)/g) || []).length, 1);
+  assert.match(html, /if \(ACTIVE\.has\(n\.id\)\) a\.filter = "url\(#glow\)"/);
+});
