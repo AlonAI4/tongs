@@ -277,3 +277,27 @@ test("labels never overlap at any zoom level the page uses", async () => {
   assert.ok(shownSomewhere > 0);
   assert.ok(g.nodes.filter(n => n.type === "project").every(n => n.lv), "every project gets a label at some zoom");
 });
+
+test("active circles: a chat that wrote in the last 15 minutes is active, an older one is idle", async () => {
+  const home = newHome();
+  write(home, "-Users-x-game/new.jsonl", [line({ id: "a", cwd: "/Users/x/game", inp: 500, ts: "2026-10-23T10:00:00Z" }), line({ id: "b", cwd: "/Users/x/game", inp: 500, ts: "2026-10-23T11:55:00Z" })]);
+  write(home, "-Users-x-game/old.jsonl", [line({ id: "c", cwd: "/Users/x/game", inp: 500, ts: "2026-10-23T11:00:00Z" })]);
+  const { agents } = await read(home);
+  const now = Date.parse("2026-10-23T12:00:00Z");
+  const g = buildGraph(agents, now);
+  const chats = g.nodes.filter(n => n.type === "chat");
+  assert.equal(chats.length, 2);
+  const act = chats.filter(n => g.active.includes(n.id)), idle = chats.filter(n => !g.active.includes(n.id));
+  assert.equal(act.length, 1);
+  assert.equal(act[0].last, "2026-10-23T11:55");
+  assert.equal(idle.length, 1);
+  // exactly 15 minutes ago still counts; 16 does not
+  assert.equal(buildGraph(agents, Date.parse("2026-10-23T12:10:00Z")).active.length, 1);
+  assert.equal(buildGraph(agents, Date.parse("2026-10-23T12:11:00Z")).active.length, 0);
+});
+
+test("the page draws active circles orange and idle ones grey", async () => {
+  const html = readFileSync(join(dirname(SCRIPT), "agents-template.html"), "utf8");
+  assert.match(html, /ACTIVE\.has\(n\.id\) \? "var\(--m-opus\)" : "var\(--idle\)"/);
+  assert.match(html, /--idle:#/);
+});

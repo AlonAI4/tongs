@@ -311,7 +311,10 @@ function placeLabels(nodes) {
 const byCount = (x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1);
 const round = v => Math.round(v * 100) / 100;
 
-export function buildGraph(agents) {
+export const ACTIVE_MIN = 15; // a circle is active when its agent wrote something this recently
+const minuteOf = t => Math.floor(Date.parse(t + (t.endsWith("Z") ? "" : "Z")) / 60000);
+
+export function buildGraph(agents, now = Date.now()) {
   const byId = new Map(agents.map(a => [a.id, a]));
   // families: a chat and the subagents it started. A subagent whose chat is not in the logs stands alone.
   const fams = new Map();
@@ -325,6 +328,7 @@ export function buildGraph(agents) {
       ...f, project: f.head.project || "other", folders,
       fresh: all.reduce((s, a) => s + a.fresh, 0), cached: all.reduce((s, a) => s + a.cached, 0),
       first: all.map(a => a.first).filter(Boolean).sort()[0] || null,
+      last: all.map(a => a.last).filter(Boolean).sort().pop() || null,
     };
   }).sort((a, b) => b.fresh - a.fresh || (a.head.id < b.head.id ? -1 : 1));
 
@@ -379,7 +383,7 @@ export function buildGraph(agents) {
     const h = f.head, mods = [...h.models.entries()].sort(byCount);
     const leaf = {
       id: h.id, type: h.sub ? "subagent" : "chat", label: `${mods[0][0]} · ${fmt(f.fresh)}`, family: family(mods[0][0]),
-      r: leafR(f.fresh), first: f.first, subs: [], cross: [],
+      r: leafR(f.fresh), first: f.first, last: f.last, subs: [], cross: [],
       detail: `${h.sub ? "Subagent (its chat is not in these logs)" : "Chat"} in ${f.project}. Fresh tokens ${fmt(f.fresh)}, cached ${fmt(f.cached)}` +
         (f.subs.length ? `, including ${f.subs.length} subagent${f.subs.length === 1 ? "" : "s"} (${fmt(f.subs.reduce((s, a) => s + a.fresh, 0))} fresh)` : "") + ". " +
         `Models: ${mods.map(m => m[0]).join(", ")}. ` +
@@ -423,7 +427,7 @@ export function buildGraph(agents) {
     const x = ox + n.x * k, y = oy + n.y * k;
     if (n.type !== "root") {
       const out = { id: n.id, type: n.type, label: n.label, x: round(x), y: round(y), r: round(n.r * k), parent: parentId, top };
-      for (const key of ["family", "detail", "first", "subs", "cross"]) if (n[key] !== undefined) out[key] = n[key];
+      for (const key of ["family", "detail", "first", "last", "subs", "cross"]) if (n[key] !== undefined) out[key] = n[key];
       if (n.type === "project") out.detail = `Project. ${countLeaves(n)} chats shown.`;
       if (n.type === "group") out.detail = `${n.children.length} smaller projects grouped together.`;
       if (n.type === "folder") out.detail = n.label === "scratch" ? "Temporary files, outside your projects." :
@@ -449,7 +453,7 @@ export function buildGraph(agents) {
       const id = a.id;
       n.subs.push(id);
       nodes.push({ id, type: "subagent", overlay: true, parent: n.id, label: `${mods[0][0]} · ${fmt(a.fresh)}`, family: family(mods[0][0]),
-        x: round(n.x + ring * Math.cos(th)), y: round(n.y + ring * Math.sin(th)), r: round(rs[i]), first: a.first,
+        x: round(n.x + ring * Math.cos(th)), y: round(n.y + ring * Math.sin(th)), r: round(rs[i]), first: a.first, last: a.last,
         detail: `Subagent, started by the chat "${n.label}"${a.first ? " at " + a.first.replace("T", " ") + " UTC" : ""}. Fresh tokens ${fmt(a.fresh)}, cached ${fmt(a.cached)}. Models: ${mods.map(m => m[0]).join(", ")}.` });
     });
   }
@@ -475,6 +479,7 @@ export function buildGraph(agents) {
   const days = [...new Set(nodes.filter(n => n.first).map(n => n.first.slice(0, 10)))].sort();
   const PAD = 20;
   return { nodes, bridges, days, box: [-PAD, -PAD, REF_W + 2 * PAD, REF_W + 2 * PAD], limits: LIMITS, levels: LEVELS, refW: REF_W,
+    activeMin: ACTIVE_MIN, active: nodes.filter(n => n.last && minuteOf(n.last) >= Math.floor(now / 60000) - ACTIVE_MIN).map(n => n.id),
     folded: [...folded.values()].reduce((s, x) => s + x.n, 0) };
 }
 

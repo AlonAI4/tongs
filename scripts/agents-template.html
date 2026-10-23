@@ -12,7 +12,7 @@
 :root{
   color-scheme:light; --ground:#E4E4E0; --surface:#F2F2EF; --line:#CBCAC3; --ink:#191512; --ink-2:#4A423A; --ink-dim:#655C52; --edge:#848377;
   --well-1:rgba(25,21,18,.045); --well-2:rgba(25,21,18,.06);
-  --m-opus:#C0430A; --m-sonnet:hsl(205 55% 36%); --m-haiku:hsl(140 45% 30%); --m-fable:hsl(268 38% 46%); --m-other:#655C52;
+  --m-opus:#C0430A; --m-sonnet:hsl(205 55% 36%); --m-haiku:hsl(140 45% 30%); --m-fable:hsl(268 38% 46%); --m-other:#655C52; --idle:#8C877E;
   --f-display:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
   --f-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
   --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
@@ -21,7 +21,7 @@
   :root{
     color-scheme:dark; --ground:#0D0B0A; --surface:#151210; --line:#2E2721; --ink:#F2EBE0; --ink-2:#C3B7A8; --ink-dim:#A2968A; --edge:#7A6656;
     --well-1:rgba(255,235,210,.035); --well-2:rgba(255,235,210,.05);
-    --m-opus:#FF6A1F; --m-sonnet:hsl(205 60% 66%); --m-haiku:hsl(140 40% 56%); --m-fable:hsl(268 60% 76%); --m-other:#A2968A;
+    --m-opus:#FF6A1F; --m-sonnet:hsl(205 60% 66%); --m-haiku:hsl(140 40% 56%); --m-fable:hsl(268 60% 76%); --m-other:#A2968A; --idle:#5C554E;
   }
 }
 *{box-sizing:border-box}
@@ -79,7 +79,7 @@ circle,path,line{vector-effect:non-scaling-stroke}
     <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="currentColor" fill-opacity=".3" stroke="currentColor" stroke-width="1.5"/></svg>subagent</div>
     <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 2"/></svg>small chats folded together</div>
     <div class="key"><svg viewBox="0 0 16 16"><path d="M1 12Q8 2 15 12" fill="none" stroke="currentColor" stroke-width="2"/></svg>chats of one project working in another</div>
-    <h2>Colour is the model</h2>
+    <h2>Orange is working now</h2>
     <div id="models"></div>
     <h2>Time</h2>
     <div class="time">
@@ -102,13 +102,15 @@ circle,path,line{vector-effect:non-scaling-stroke}
   const el = (n, a, p) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e; };
   const MODELS = ["opus","sonnet","haiku","fable","other"];
   const colour = f => "var(--m-" + (MODELS.includes(f) ? f : "other") + ")";
+  const ACTIVE = new Set(G.active);
+  const stateColour = n => ACTIVE.has(n.id) ? "var(--m-opus)" : "var(--idle)";
   const byId = new Map(G.nodes.map(n => [n.id, n]));
   const isLeaf = n => n.type === "chat" || n.type === "subagent";
 
   // ---------- legend
   const km = document.getElementById("models");
-  MODELS.forEach(m => { const d = document.createElement("div"); d.className = "key";
-    const s = el("svg", {viewBox:"0 0 16 16"}); el("circle", {cx:8, cy:8, r:5, fill:colour(m)}, s); d.appendChild(s); d.appendChild(document.createTextNode(m)); km.appendChild(d); });
+  [["active (last " + G.activeMin + " min)", "var(--m-opus)"], ["idle", "var(--idle)"]].forEach(([name, c]) => { const d = document.createElement("div"); d.className = "key";
+    const s = el("svg", {viewBox:"0 0 16 16"}); el("circle", {cx:8, cy:8, r:5, fill:c}, s); d.appendChild(s); d.appendChild(document.createTextNode(name)); km.appendChild(d); });
   document.getElementById("caps").textContent = "Every chat with at least " + G.limits.foldBelow + " fresh tokens. " + G.folded +
     " smaller chats are folded into one dashed circle per project. The " + G.limits.projects + " busiest projects are top-level circles; the rest sit in \"smaller projects\". Up to " +
     G.limits.foldersPerAgent + " folders per chat.";
@@ -135,7 +137,7 @@ circle,path,line{vector-effect:non-scaling-stroke}
     const g = el("g", {class:"node" + (n.overlay ? " off" : ""), tabindex:"0", role:"button", "aria-label":n.type + ": " + n.label}, layer);
     const cls = {project:"c-project", group:"c-group", folder:"c-folder", small:"c-small", chat:"c-chat", subagent:"c-chat c-sub"}[n.type];
     const a = {class:"shape " + cls, cx:n.x, cy:n.y, r:n.r};
-    if (isLeaf(n)) { a.fill = colour(n.family); if (n.type === "subagent") a.stroke = colour(n.family); }
+    if (isLeaf(n)) { a.fill = stateColour(n); if (n.type === "subagent") a.stroke = stateColour(n); }
     el("circle", a, g);
     let badge = null;
     if (n.subs) {
