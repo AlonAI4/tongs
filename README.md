@@ -69,7 +69,8 @@ Left behind, if you want them gone too: the drawn maps in `~/.claude/tongs-maps`
 1. **Size.** `scripts/detector.py --report` reads the token counts Claude Code saves with each reply and splits them into setup and chat. It finds this exact chat through the session id Claude Code gives its commands; without one it uses the newest chat in the folder, and says so.
 2. **Map file.** Claude writes `TONGS-MAP.md` in your project. It is detailed on purpose: a file on disk costs nothing per message.
 3. **Drawn map.** The same map as JSON becomes a graph page (`scripts/draw-map.mjs`): goal in the middle, then decisions, files, done, now, open questions, gotchas and rules. Click a node for its details, or search. In the desktop app it opens in the browser pane next to the chat; in the terminal, in your browser.
-4. **The `/compact` line.** Claude can't run `/compact` itself, so it ends with one line: the meter mod runs it for you when the reply ends, and without the mod you type it. It tells the summary what to keep and to read `TONGS-MAP.md` after compacting, before re-reading any files.
+4. **Super graph.** `node scripts/super-graph.mjs` puts every drawn map and the agent graph on one page: one dot per graph inside its project, turning into a miniature of that graph as you zoom in. Put `<map name>.png`, `.jpg` or `.svg` (200 KB at most) in `~/.claude/tongs-maps/dots` to use your own picture for a dot.
+5. **The `/compact` line.** Claude can't run `/compact` itself, so it ends with one line: the meter mod runs it for you when the reply ends, and without the mod you type it. It tells the summary what to keep and to read `TONGS-MAP.md` after compacting, before re-reading any files.
 
 ## Safety
 

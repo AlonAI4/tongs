@@ -492,7 +492,7 @@ export function fmt(n) {
 }
 
 // ---------------------------------------------------------------- the page
-export function renderPage(graph) {
+export function renderPage(graph, template = "agents-template.html") {
   const json = JSON.stringify(graph)
     .replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026")
     .replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
@@ -509,7 +509,7 @@ export function renderPage(graph) {
     fontCss += `@font-face{font-family:"${fam}";font-style:normal;font-weight:${w};font-display:swap;src:url(data:font/woff2;base64,${readFileSync(p).toString("base64")}) format("woff2")}\n`;
   }
   const fill = { FONTS: fontCss, DATA: json };
-  return readFileSync(join(here, "agents-template.html"), "utf8").replace(/\/\*__(FONTS|DATA)__\*\//g, (_, k) => fill[k]);
+  return readFileSync(join(here, template), "utf8").replace(/\/\*__(FONTS|DATA)__\*\//g, (_, k) => fill[k]);
 }
 
 // ---------------------------------------------------------------- command line

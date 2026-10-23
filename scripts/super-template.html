@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- No network at all: everything this page needs is inside it. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:; img-src data:">
+<title>Super graph · Tongs</title>
+<style>
+/*__FONTS__*/
+/* Colours and fonts follow the Tongs map page (map-template.html). */
+:root{
+  color-scheme:light; --ground:#E4E4E0; --surface:#F2F2EF; --line:#CBCAC3; --ink:#191512; --ink-2:#4A423A; --ink-dim:#655C52; --edge:#848377;
+  --well-1:rgba(25,21,18,.045); --well-2:rgba(25,21,18,.06);
+  --m-opus:#C0430A; --m-sonnet:hsl(205 55% 36%); --m-haiku:hsl(140 45% 30%); --m-fable:hsl(268 38% 46%); --m-other:#655C52; --idle:#8C877E;
+  --f-display:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
+  --f-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    color-scheme:dark; --ground:#0D0B0A; --surface:#151210; --line:#2E2721; --ink:#F2EBE0; --ink-2:#C3B7A8; --ink-dim:#A2968A; --edge:#7A6656;
+    --well-1:rgba(255,235,210,.035); --well-2:rgba(255,235,210,.05);
+    --m-opus:#FF6A1F; --m-sonnet:hsl(205 60% 66%); --m-haiku:hsl(140 40% 56%); --m-fable:hsl(268 60% 76%); --m-other:#A2968A; --idle:#5C554E;
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--f-body);font-size:.9375rem;line-height:1.5;overflow:hidden}
+:focus-visible{outline:2px solid var(--m-opus);outline-offset:2px}
+.app{display:grid;grid-template-columns:280px minmax(0,1fr);height:100vh;height:100dvh}
+.rail{background:var(--surface);border-right:1px solid var(--line);padding:18px 16px;overflow:auto}
+h1{font:700 1.7rem/1 var(--f-display);letter-spacing:.02em;text-transform:uppercase;margin:0 0 4px}
+.sub{color:var(--ink-dim);font-size:.8rem;margin:0 0 14px}
+h2{font:400 .7rem var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-dim);margin:18px 0 6px}
+.key{display:flex;align-items:center;gap:8px;font-size:.85rem;margin:3px 0}
+.key svg{width:16px;height:16px;flex:none}
+#detail{font-size:.85rem;color:var(--ink-2);min-height:4.5em;overflow-wrap:anywhere}
+#detail b{display:block;color:var(--ink);font-size:.95rem;margin-bottom:4px}
+.time label{display:grid;grid-template-columns:3.2em 1fr;align-items:center;gap:6px;font-size:.8rem;color:var(--ink-2)}
+.time input{width:100%;accent-color:var(--m-opus)}
+.time output{display:block;font:400 .78rem var(--f-mono);color:var(--ink);margin:2px 0 8px 3.6em}
+.stage{position:relative;min-width:0}
+svg#g{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+circle{vector-effect:non-scaling-stroke}
+.c-project{fill:var(--well-1);stroke:var(--ink-2);stroke-width:1.6}
+.c-map{fill:var(--ink-2);stroke:var(--ground);stroke-width:1}
+.c-ring{fill:none;stroke:var(--ink-dim);stroke-width:1}
+.mini circle{stroke:none}
+.mini .w{fill:var(--well-2)}
+.mini .wp{fill:var(--well-1);stroke:var(--ink-dim);stroke-width:.6}
+.node{cursor:pointer}
+.node:focus-visible .shape,.node.sel .shape,.node.sel .c-ring{stroke:var(--ink);stroke-width:2.6}
+.lbl{font-family:var(--f-mono);font-weight:500;fill:var(--ink);text-anchor:middle;dominant-baseline:central;pointer-events:none;paint-order:stroke;stroke:var(--ground)}
+.lbl.proj{font-family:var(--f-display);font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.off{display:none}
+#detail a{color:var(--m-opus)}
+@media (max-width:760px){.app{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}.rail{border-right:0;border-bottom:1px solid var(--line);max-height:42vh}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <h1>Super graph</h1>
+    <p class="sub">Every Tongs graph on one map. Each dot is one graph, inside its project's circle; its size is how many nodes it has. Zoom in and each dot turns into a small picture of its own graph. Scroll to zoom, drag to move, double-click to reset.</p>
+    <h2>Circles</h2>
+    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>project</div>
+    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="currentColor"/></svg>one graph (a chat map or the agent graph)</div>
+    <h2>Inside a graph</h2>
+    <div id="types"></div>
+    <h2>Your own dots</h2>
+    <p class="sub">Put a .png, .jpg or .svg (200 KB at most) named like the graph, for example forge.png, in ~/.claude/tongs-maps/dots, then run super-graph.mjs again.</p>
+    <h2>Details</h2>
+    <div id="detail" aria-live="polite">Click a circle.</div>
+    <h2>What is shown</h2>
+    <p class="sub" id="caps"></p>
+  </aside>
+  <main class="stage"><svg id="g" role="img" aria-label="Super graph: every Tongs graph as a dot inside its project" preserveAspectRatio="xMidYMid meet"></svg></main>
+</div>
+<script type="application/json" id="graph-data">/*__DATA__*/</script>
+<script>
+(function(){
+  const G = JSON.parse(document.getElementById("graph-data").textContent);
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.getElementById("g");
+  const el = (n, a, p) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e; };
+  const byId = new Map(G.nodes.map(n => [n.id, n]));
+
+  // node types inside a chat map, and inside the agent graph
+  const TYPE = {goal:"var(--m-opus)", now:"var(--m-opus)", decision:"var(--m-sonnet)", done:"var(--m-haiku)", open:"var(--m-fable)",
+    gotcha:"#B3261E", rule:"var(--ink-dim)", file:"var(--m-other)", chat:"var(--idle)", subagent:"var(--idle)", small:"var(--idle)"};
+  const tk = document.getElementById("types");
+  [["goal or now", TYPE.goal], ["decision", TYPE.decision], ["done", TYPE.done], ["open question", TYPE.open], ["gotcha", TYPE.gotcha], ["rule", TYPE.rule], ["file", TYPE.file], ["chat (orange when it was working)", TYPE.chat]]
+    .forEach(([name, c]) => { const d = document.createElement("div"); d.className = "key";
+      const s = el("svg", {viewBox:"0 0 16 16"}); el("circle", {cx:8, cy:8, r:5, fill:c}, s); d.appendChild(s); d.appendChild(document.createTextNode(name)); tk.appendChild(d); });
+  document.getElementById("caps").textContent = G.maps + " graphs in " + G.projects + " projects. Maps that share a first word (forge-1, forge-2) share a project, unless the map names its own.";
+
+  const defs = el("defs", {}, svg);
+  const gProjects = el("g", {}, svg), gDots = el("g", {}, svg), gLabels = el("g", {}, svg);
+  const view = new Map();
+
+  function draw(n) {
+    const g = el("g", {class:"node", tabindex:"0", role:"button", "aria-label":(n.type === "project" ? "project: " : "graph: ") + n.label}, n.type === "project" ? gProjects : gDots);
+    const v = {n, g, shape:null, image:null, mini:null};
+    if (n.type === "project") v.shape = el("circle", {class:"shape c-project", cx:n.x, cy:n.y, r:n.r}, g);
+    else {
+      v.shape = el("circle", {class:"shape c-map", cx:n.x, cy:n.y, r:n.r}, g);
+      if (n.image) {
+        const id = "clip-" + view.size, clip = el("clipPath", {id}, defs); el("circle", {cx:n.x, cy:n.y, r:n.r}, clip);
+        v.image = el("image", {href:n.image, x:n.x - n.r, y:n.y - n.r, width:2 * n.r, height:2 * n.r, preserveAspectRatio:"xMidYMid slice", "clip-path":"url(#" + id + ")"}, g);
+      }
+      el("circle", {class:"c-ring", cx:n.x, cy:n.y, r:n.r}, g);
+    }
+    v.label = el("text", {class:"lbl" + (n.type === "project" ? " proj" : "")}, gLabels);
+    v.label.textContent = n.label;
+    g.addEventListener("click", ev => { ev.stopPropagation(); if (!moved) select(n.id); });
+    g.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(n.id); } });
+    view.set(n.id, v);
+  }
+  G.nodes.forEach(draw);
+
+  // a dot's miniature: drawn the first time it is needed, then only faded
+  function mini(v) {
+    const n = v.n, g = el("g", {class:"mini", "pointer-events":"none"}, v.g);
+    for (const [x, y, r, t, a] of n.mini) {
+      const cx = n.x + x * n.r, cy = n.y + y * n.r, rr = Math.max(r * n.r, 0.02);
+      const cls = t === "project" ? "wp" : t === "group" || t === "folder" ? "w" : "";
+      el("circle", cls ? {class:cls, cx, cy, r:rr} : {cx, cy, r:rr, fill:a ? "var(--m-opus)" : TYPE[t] || "var(--m-other)"}, g);
+    }
+    return g;
+  }
+
+  // ---------- zoom: wheel zooms toward the pointer, drag pans, double-click resets
+  let vb = G.box.slice(), z = 1, selected = null;
+  const FONT = {project:[9,18], map:[7.2,14]};
+  function zoom() { const r = svg.getBoundingClientRect(); return Math.min(r.width / vb[2], r.height / vb[3]) || 1; }
+  function level() { let i = -1; G.levels.forEach((l, j) => { if (l <= z) i = j; }); return i; }
+  const clamp = v => Math.max(0, Math.min(1, v));
+  function apply() {
+    svg.setAttribute("viewBox", vb.join(" "));
+    z = zoom(); const s = 1 / z, lv = level();
+    view.forEach(v => {
+      const n = v.n, [cw, h] = FONT[n.type], planned = lv >= 0 && ((n.lv || 0) >> lv) & 1;
+      // same placement as labelBox() in agent-graph.mjs, at the level the collision check used
+      const sp = planned ? 1 / G.levels[lv] : s, hp = h * sp, inside = n.label.length * cw * sp <= 1.5 * n.r && n.r >= 2 * hp;
+      v.label.classList.toggle("off", !(planned || n.id === selected));
+      v.label.setAttribute("x", n.x);
+      v.label.setAttribute("y", inside ? n.y - n.r + hp * 0.9 : n.y - n.r - hp * 0.6);
+      v.label.setAttribute("font-size", (h * 0.78 * s).toFixed(4));
+      v.label.setAttribute("stroke-width", (3 * s).toFixed(4));
+      if (n.type !== "map") return;
+      // from about 60 px across on screen the dot gives way to its own graph
+      const t = clamp((n.r * z - 30) / 45);
+      if (t > 0 && !v.mini) v.mini = mini(v);
+      if (v.mini) v.mini.style.opacity = t;
+      v.shape.style.fillOpacity = 1 - 0.85 * t;
+      if (v.image) v.image.style.opacity = 1 - 0.85 * t;
+    });
+  }
+  svg.addEventListener("wheel", ev => {
+    ev.preventDefault();
+    const k = ev.deltaY < 0 ? 0.85 : 1 / 0.85;
+    const w = Math.min(G.box[2] * 1.5, Math.max(G.box[2] / 400, vb[2] * k)), h = w * (vb[3] / vb[2]);
+    const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+    const m = svg.getScreenCTM(), p = m ? pt.matrixTransform(m.inverse()) : {x: vb[0] + vb[2] / 2, y: vb[1] + vb[3] / 2};
+    vb = [p.x - (p.x - vb[0]) * w / vb[2], p.y - (p.y - vb[1]) * h / vb[3], w, h]; apply();
+  }, {passive:false});
+  let drag = null, moved = false;
+  svg.addEventListener("pointerdown", ev => { if (ev.button === 0) { drag = {x:ev.clientX, y:ev.clientY, vb:vb.slice()}; moved = false; } });
+  svg.addEventListener("pointermove", ev => { if (!drag) return; const r = svg.getBoundingClientRect(), dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+    if (!moved && Math.abs(dx) + Math.abs(dy) > 4) moved = true;
+    if (moved) { const k = Math.max(vb[2] / r.width, vb[3] / r.height); vb = [drag.vb[0] - dx * k, drag.vb[1] - dy * k, vb[2], vb[3]]; apply(); } });
+  window.addEventListener("pointerup", () => { drag = null; });
+  svg.addEventListener("click", () => { if (!moved) select(null); });
+  svg.addEventListener("dblclick", () => { vb = G.box.slice(); apply(); });
+  new ResizeObserver(() => apply()).observe(svg);
+
+  function select(id) {
+    selected = selected === id ? null : id;
+    view.forEach(({g}, nid) => g.classList.toggle("sel", nid === selected));
+    const d = document.getElementById("detail"); d.textContent = "";
+    const n = byId.get(selected);
+    if (!n) { d.textContent = "Click a circle."; apply(); return; }
+    const b = document.createElement("b"); b.textContent = n.label; d.appendChild(b);
+    if (n.type === "project") {
+      const kids = G.nodes.filter(m => m.parent === n.id);
+      d.appendChild(document.createTextNode("Project with " + kids.length + " graph" + (kids.length === 1 ? "" : "s") + "."));
+    } else {
+      d.appendChild(document.createTextNode(n.count + " nodes" + (n.links ? ", " + n.links + " links" : "") + ". "));
+      const a = document.createElement("a"); a.href = n.file; a.textContent = "Open this graph"; d.appendChild(a);
+    }
+    apply();
+  }
+})();
+</script>
+</body>
+</html>
