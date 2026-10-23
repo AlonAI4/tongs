@@ -210,3 +210,63 @@ test('auto-compact gets the Tongs focus; a typed /compact and subagents keep the
   expect(seen).toEqual([full, full, undefined, 'keep the CSS', 'from another mod', undefined])
   expect(toasts).toEqual(['Auto-compacting with the Tongs focus.'])
 })
+
+// ---------------------------------------------------------------- 0.4.0: past the limit, and /tongs compacting itself
+
+const usageAt = (tokens: number | undefined) => () => ({ value: { startedAt: 0, context: { tokens, window: 1000000 }, rateLimits: [] } })
+const submit = ($: any, text: string, command?: { name: string; args: string }) =>
+  $.prompt.submit({ text, wait: false, origin: { kind: 'user' }, ...(command ? { command } : {}) })
+
+test('past the limit every message carries a reminder for Claude; under it, and on slash commands, none', async ($, on) => {
+  let tokens: number | undefined = 399999
+  const seen: (readonly string[] | undefined)[] = []
+  mock.env(on, { HOME })
+  on('fs.read', ($, e) => ({ value: e.path === CONFIG ? '{"limit": 400000}' : '' }))
+  on('session.usage', () => usageAt(tokens)())
+  on('prompt.submit', ($, e) => { seen.push(e.context); return { text: e.text } })
+  await submit($, 'under the limit')
+  tokens = 400000
+  await submit($, 'at the limit')
+  tokens = 512000
+  await submit($, 'well past it')
+  await submit($, '/tongs', { name: 'tongs', args: '' })
+  tokens = undefined
+  await submit($, 'no size yet')
+  expect(seen[0]).toBeUndefined()
+  expect(seen[1]?.length).toBe(1)
+  expect(seen[1]?.[0]).toContain('re-reads 400k tokens on every message, 100% of the Tongs limit 400k')
+  expect(seen[1]?.[0]).toContain('/tongs')
+  expect(seen[2]?.[0]).toContain('re-reads 512k tokens on every message, 128%')
+  expect(seen[3]).toBeUndefined()
+  expect(seen[4]).toBeUndefined()
+})
+
+const ANSWER = 'Map saved.\n\n```\n/compact Keep the goal, the current task (meter tests) and the user\'s rules. Full details are in /x/TONGS-MAP.md: read it after compacting before re-reading any files.\n```\n'
+const turn = (answer: string, more: object = {}) => ({ answer, durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', ...more })
+
+test('after /tongs replies with its /compact line, the meter runs that compaction itself, once', async ($, on) => {
+  const compacts: (string | undefined)[] = []
+  mock.env(on, { HOME })
+  on('session.compact', ($, e) => { compacts.push(e.instructions); return { messages: [], tokensBefore: 420000, tokensAfter: 30000 } })
+  on('turn.complete', ($, e) => ({ text: e.answer }))
+  on('skill.prompt', ($, e) => ({ text: e.text }))
+  await $.turn.complete(turn(ANSWER)) // no /tongs this turn: nothing runs
+  await $.skill.prompt({ skill: 'tongs', text: 'the skill', frontmatter: {} })
+  await $.turn.complete(turn(ANSWER, { agentId: 'sub-1' })) // a subagent's turn ending is not the reply
+  await $.turn.complete(turn(ANSWER))
+  await $.turn.complete(turn(ANSWER)) // the next turn: /tongs did not run again
+  expect(compacts).toEqual(["Keep the goal, the current task (meter tests) and the user's rules. Full details are in /x/TONGS-MAP.md: read it after compacting before re-reading any files."])
+})
+
+test('an interrupted /tongs reply, or one with no /compact line (size, scan, sendoff), compacts nothing', async ($, on) => {
+  const compacts: (string | undefined)[] = []
+  mock.env(on, { HOME })
+  on('session.compact', ($, e) => { compacts.push(e.instructions); return { messages: [] } })
+  on('turn.complete', ($, e) => ({ text: e.answer }))
+  on('skill.prompt', ($, e) => ({ text: e.text }))
+  await $.skill.prompt({ skill: 'tongs', text: 'the skill', frontmatter: {} })
+  await $.turn.complete(turn(ANSWER, { isAborted: true, reason: 'aborted' }))
+  await $.skill.prompt({ skill: 'tongs', text: 'the skill', frontmatter: {} })
+  await $.turn.complete(turn('Chat is 120k per message, limit 400k. Use /compact when you are done.'))
+  expect(compacts).toEqual([])
+})

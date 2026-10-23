@@ -21,7 +21,7 @@ Claude doesn't remember a chat. On every message it re-reads all of it: your set
 
 | | What it does |
 |---|---|
-| `/tongs` | Shows the chat's size, writes `TONGS-MAP.md` (goal, files, decisions, rules, done, now, open questions, gotchas), draws it as a graph, and gives you the `/compact` line to type. |
+| `/tongs` | Shows the chat's size, writes `TONGS-MAP.md` (goal, files, decisions, rules, done, now, open questions, gotchas), draws it as a graph, and ends with the `/compact` line. With the meter mod on, the meter runs that line for you. |
 | Meter (optional mod) | A line above the prompt: `chat 290k / msg · auto-compact at 367k · 79%, map it soon with /tongs`. It measures against where Claude Code really auto-compacts when you set `CLAUDE_CODE_AUTO_COMPACT_WINDOW` (about 33k before that window: a 400k window compacts at about 367k), otherwise against the Tongs limit. Dim when small, orange with a **Compact** button from 70%, red from 85%: time to run `/tongs` before auto-compact squashes the chat without a map. At 100% it asks "do you want to compact?" with **Compact** and **Not now**, so you can go past the limit on purpose (it asks again once the chat has been back under it). The Compact button, and Claude Code's own auto-compact, tell the summary to keep the goal, the current task and your rules, and to read `TONGS-MAP.md` after compacting (that part only when the folder has one). |
 | `/tongs sendoff` | Only if you want a fresh chat: the map plus a paste-ready first prompt. |
 | `/tongs size` | Just the size, and what it means. |
@@ -69,7 +69,7 @@ Left behind, if you want them gone too: the drawn maps in `~/.claude/tongs-maps`
 1. **Size.** `scripts/detector.py --report` reads the token counts Claude Code saves with each reply and splits them into setup and chat. It finds this exact chat through the session id Claude Code gives its commands; without one it uses the newest chat in the folder, and says so.
 2. **Map file.** Claude writes `TONGS-MAP.md` in your project. It is detailed on purpose: a file on disk costs nothing per message.
 3. **Drawn map.** The same map as JSON becomes a graph page (`scripts/draw-map.mjs`): goal in the middle, then decisions, files, done, now, open questions, gotchas and rules. Click a node for its details, or search. In the desktop app it opens in the browser pane next to the chat; in the terminal, in your browser.
-4. **The `/compact` line.** Claude can't run `/compact` itself, so it gives you one line to type. It tells the summary what to keep and to read `TONGS-MAP.md` after compacting, before re-reading any files.
+4. **The `/compact` line.** Claude can't run `/compact` itself, so it ends with one line: the meter mod runs it for you when the reply ends, and without the mod you type it. It tells the summary what to keep and to read `TONGS-MAP.md` after compacting, before re-reading any files.
 
 ## Safety
 

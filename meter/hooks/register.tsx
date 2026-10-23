@@ -7,6 +7,9 @@
 // At 100% it asks "do you want to compact?" with Compact and Not now, so a chat can
 // go past the limit on purpose; Not now lasts until the chat is back under it.
 // Auto-compact is told the same thing, so its summary points at TONGS-MAP.md too.
+// Past 100% the chat may keep going, but every message the person sends then carries a
+// note to Claude (never shown) to say so and offer /tongs. And when /tongs ends its reply
+// with its /compact line, the meter runs that compaction itself, so nobody has to type it.
 // The size is the engine's own figure ($.session.usage(), free to call), redrawn
 // after each reply. The meter never sends a prompt or starts a Claude turn.
 import type { EngineInterface, Register } from 'claude-code'
@@ -55,8 +58,26 @@ async function getLimit($: EngineInterface): Promise<Limit> {
   return limit
 }
 
-async function compact($: EngineInterface) {
-  const instructions = await focus($)
+// The note Claude reads beside each message once the chat is past the limit.
+const remind = (size: number, at: string, pct: number) =>
+  `Tongs meter: this chat re-reads ${k(size)} tokens on every message, ${pct}% of the Tongs ${at}. ` +
+  'Start your reply with one short line saying so and offering to run /tongs (it saves the map, then compacts). ' +
+  'This note comes back on every message until the chat is compacted.'
+
+type Size = { size: number | undefined; max: number; at: string; pct: number }
+async function measure($: EngineInterface): Promise<Size> {
+  const { max: wanted, label } = await getLimit($)
+  const { tokens: size, window } = (await $.session.usage()).context
+  // Claude Code never waits past the model's own context window, and stops a little before it.
+  const max = label === 'limit' ? wanted : Math.min(wanted, window || wanted) - AUTO_COMPACT_GAP
+  const pct = size === undefined ? 0 : Math.floor((size * 100) / max) // never rounds up into the next colour
+  return { size, max, at: label + ' ' + k(max), pct }
+}
+
+let tongsRan = false // /tongs ran this turn: its /compact line, if any, is run when the turn ends
+
+async function compact($: EngineInterface, given?: string) {
+  const instructions = given ?? await focus($)
   try {
     const r = await $.session.compact({ instructions })
     if (r.skip !== undefined) $.ui.toast(`Compact skipped: ${r.skip}`)
@@ -103,16 +124,38 @@ export const register: Register = on => {
     return next({ ...e, instructions: await focus($) })
   })
 
+  // Past the limit, each message the person sends carries the reminder for Claude. A slash
+  // command's line takes no rewrite, so it goes as it is.
+  on('prompt.submit', async ($, e, next) => {
+    if (e.command) return next(e)
+    let note: string | undefined
+    try {
+      const { size, at, pct } = await measure($)
+      if (size !== undefined && pct >= 100) note = remind(size, at, pct)
+    } catch {} // can't measure: send the message as it is
+    return next(note ? { ...e, context: [...(e.context ?? []), note] } : e)
+  })
+
+  // /tongs ends its reply with a /compact line; once that reply is finished, run it here.
+  on('skill.prompt', { skill: 'tongs' }, ($, e, next) => { tongsRan = true; return next(e) })
+  on('turn.complete', async ($, e, next) => {
+    const done = await next(e)
+    if (e.agentId === undefined && tongsRan) {
+      tongsRan = false
+      const line = /^\/compact[ \t]+(\S.*)$/m.exec(e.answer)
+      if (line && !e.isAborted) {
+        $.ui.toast('Running the /compact line from /tongs.')
+        void compact($, line[1].trim())
+      }
+    }
+    return done
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const below = await next(e) // keep whatever else draws here
     if (e.props.hasSurvey) return below
     const { Box, Button, Text } = $.ui.resolve(e)
-    const { max: wanted, label } = await getLimit($)
-    const { tokens: size, window } = (await $.session.usage()).context
-    // Claude Code never waits past the model's own context window, and stops a little before it.
-    const max = label === 'limit' ? wanted : Math.min(wanted, window || wanted) - AUTO_COMPACT_GAP
-    const at = label + ' ' + k(max)
-    const pct = size === undefined ? 0 : Math.floor((size * 100) / max) // never rounds up into the next colour
+    const { size, at, pct } = await measure($)
     const isBig = size !== undefined && pct >= WARN_AT
     if (pct < 100) notNow = false
     const ask = pct >= 100 && !notNow
