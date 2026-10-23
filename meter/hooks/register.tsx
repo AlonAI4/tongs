@@ -10,6 +10,8 @@
 // Past 100% the chat may keep going, but every message the person sends then carries a
 // note to Claude (never shown) to say so and offer /tongs. And when /tongs ends its reply
 // with its /compact line, the meter runs that compaction itself, so nobody has to type it.
+// When the latest message reads like a new stage of work (brainstorming, testing, building,
+// stuck) that suits another model, one button at the left offers the exact setting.
 // The size is the engine's own figure ($.session.usage(), free to call), redrawn
 // after each reply. The meter never sends a prompt or starts a Claude turn.
 import type { EngineInterface, Register } from 'claude-code'
@@ -102,6 +104,33 @@ function celebrate($: EngineInterface, before?: number, after?: number) {
   }) } catch { done.shown = after } // no timer here: show the end state, the next message clears it
 }
 
+// Stage of work -> the setting it suits. First match wins, so "stuck" beats "build".
+// Edit the words freely: each is a regex matched against the latest user message.
+const STAGES = [
+  { key: 'stuck', words: /\b(stuck|still (failing|broken)|hardest bug|tried (it )?twice)\b/i, family: 'fable', model: 'claude-fable-5-1', label: 'fable 5.1', effort: 'high' },
+  { key: 'brainstorm', words: /\b(brainstorm\w*|ideas?|name ideas|names for|plan the idea)\b/i, family: 'haiku', model: 'claude-haiku-5-5', label: 'haiku 5.5', effort: 'medium' },
+  { key: 'test', words: /\b(forge|tests?|testing|check|review|run the tests)\b/i, family: 'sonnet', model: 'claude-sonnet-5-5', label: 'sonnet 5.5', effort: 'medium' },
+  { key: 'build', words: /\b(build|implement|architecture|refactor)\b/i, family: 'opus', model: 'claude-opus-5-5', label: 'opus 5.5', effort: 'medium' },
+] as const
+type Stage = (typeof STAGES)[number]
+export const stageOf = (text: string): Stage | undefined => STAGES.find(s => s.words.test(text))
+let stage: Stage | undefined // the stage the latest message suggests
+let switchDone = false // pressed or dismissed: hidden until the stage changes
+
+async function switchTo($: EngineInterface, s: Stage) {
+  switchDone = true
+  $.ui.invalidate('ui.render')
+  try { await $.command.run({ command: 'model', args: s.model }) } catch (e) {
+    $.ui.toast(`Could not switch: ${e instanceof Error ? e.message : String(e)}. Type /model ${s.model}`)
+    return
+  }
+  let effortSet = false
+  try {
+    if ((await $.command.list()).some(c => c.name === 'effort')) { await $.command.run({ command: 'effort', args: s.effort }); effortSet = true }
+  } catch {} // no way to set effort from here: say how instead
+  $.ui.toast(effortSet ? `Switched to ${s.label} ${s.effort}.` : `Switched to ${s.label}. Set effort to ${s.effort} in /model (left and right arrows).`)
+}
+
 let tongsRan = false // /tongs ran this turn: its /compact line, if any, is run when the turn ends
 
 async function compact($: EngineInterface, given?: string) {
@@ -159,6 +188,8 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     done = undefined // the next message shows the real, measured size again
     if (e.command) return next(e)
+    const s = stageOf(e.text)
+    if (s && s.key !== stage?.key) { stage = s; switchDone = false; $.ui.invalidate('ui.render') }
     let note: string | undefined
     try {
       const { size, at, pct } = await measure($)
@@ -186,6 +217,9 @@ export const register: Register = on => {
     const below = await next(e) // keep whatever else draws here
     if (e.props.hasSurvey) return below
     const { Box, Button, Text } = $.ui.resolve(e)
+    let current = ''
+    try { current = (await $.session.model()).toLowerCase() } catch {}
+    const offer = stage && !switchDone && !current.includes(stage.family) ? stage : undefined
     const m = await measure($)
     const { at } = m
     // While the compact slide or the green line shows, draw the sliding size, not the old one.
@@ -209,10 +243,18 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         {below}
-        <Box justifyContent="flex-end" gap={1}>
+        <Box justifyContent={offer ? 'space-between' : 'flex-end'} gap={1}>
+          {offer ? (
+            <Box gap={1}>
+              <Button key="switch" label={`Switch to ${offer.label} ${offer.effort}`} onPress={() => switchTo($, offer)} />
+              <Button key="switch-no" label="Not now" onPress={() => { switchDone = true; $.ui.invalidate('ui.render') }} />
+            </Box>
+          ) : null}
+          <Box gap={1}>
           {line}
           {isBig ? <Button key="compact" label="Compact" onPress={() => compact($)} /> : null}
           {ask ? <Button key="not-now" label="Not now" onPress={() => { notNow = true; $.ui.invalidate('ui.render') }} /> : null}
+          </Box>
         </Box>
       </Box>
     )

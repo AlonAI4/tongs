@@ -286,3 +286,69 @@ test('after Compact the band turns green and starts the size at the old number, 
   expect(line?.props.color).toBe('success')
   await ui.unmount()
 })
+
+// The stage switch: one button at the left, only when the latest message suits another model.
+async function switchSetup(on: any, model: { now: string }, runs: string[], hasEffort = true) {
+  on('ui.render', ($: any, e: any) => { const { Box } = $.ui.resolve(e); return <Box /> })
+  mock.env(on, { HOME })
+  on('fs.read', () => ({ value: '{"limit": 400000}' }))
+  on('session.usage', usageAt(100000))
+  on('session.model', () => ({ value: model.now }))
+  on('prompt.submit', ($: any, e: any) => ({ text: e.text }))
+  on('command.list', () => ({ value: hasEffort ? [{ name: 'model' }, { name: 'effort' }] : [{ name: 'model' }] }))
+  on('command.run', ($: any, e: any) => { runs.push(`/${e.command} ${e.args}`); if (e.command === 'model') model.now = e.args; return { text: '' } })
+}
+const switchLabel = async ($: any) => {
+  const ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
+  const b = await ui.find({ key: 'switch' })
+  await ui.unmount()
+  return b?.props.label as string | undefined
+}
+
+test('stage switch: no button until a message reads like a stage, then the exact setting for each one', async ($, on) => {
+  const model = { now: 'claude-sonnet-5-5' }
+  await switchSetup(on, model, [])
+  expect(await switchLabel($)).toBeUndefined()
+  await submit($, 'ok thanks, looks fine')
+  expect(await switchLabel($)).toBeUndefined() // neutral: nothing
+  await submit($, 'lets brainstorm some names')
+  expect(await switchLabel($)).toBe('Switch to haiku 5.5 medium')
+  await submit($, 'now build the super graph')
+  expect(await switchLabel($)).toBe('Switch to opus 5.5 medium')
+  await submit($, 'it is still failing, I am stuck')
+  expect(await switchLabel($)).toBe('Switch to fable 5.1 high')
+  await submit($, 'run the tests please')
+  expect(await switchLabel($)).toBeUndefined() // already on sonnet: no button
+})
+
+test('stage switch: pressing sets model and effort, Not now hides it, a new stage brings it back', async ($, on) => {
+  const model = { now: 'claude-sonnet-5-5' }, runs: string[] = []
+  await switchSetup(on, model, runs)
+  await submit($, 'implement part two')
+  let ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
+  await ui.press({ key: 'switch' })
+  await ui.unmount()
+  expect(runs).toEqual(['/model claude-opus-5-5', '/effort medium'])
+  expect(await switchLabel($)).toBeUndefined() // pressed: gone (and now on opus anyway)
+  await submit($, 'brainstorm ideas for the logo')
+  ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
+  await ui.press({ key: 'switch-no' })
+  await ui.unmount()
+  expect(await switchLabel($)).toBeUndefined() // dismissed
+  await submit($, 'more ideas please') // same stage again: stays hidden
+  expect(await switchLabel($)).toBeUndefined()
+  await submit($, 'review the diff')
+  expect(await switchLabel($)).toBe('Switch to sonnet 5.5 medium') // a new stage: back
+})
+
+test('stage switch: with no /effort command it sets the model and says how to set effort', async ($, on) => {
+  const model = { now: 'claude-sonnet-5-5' }, runs: string[] = [], toasts: string[] = []
+  await switchSetup(on, model, runs, false)
+  on('ui.toast', ($: any, e: any) => { toasts.push(e.text); return {} })
+  await submit($, 'I am stuck on this bug')
+  const ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
+  await ui.press({ key: 'switch' })
+  await ui.unmount()
+  expect(runs).toEqual(['/model claude-fable-5-1'])
+  expect(toasts.at(-1)).toContain('Set effort to high')
+})
