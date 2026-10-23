@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- No network at all: everything this page needs is inside it. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:; img-src data:">
+<title>Agent graph · Tongs</title>
+<style>
+/*__FONTS__*/
+/* Colours and fonts follow the Tongs map page (map-template.html). */
+:root{
+  color-scheme:light; --ground:#E4E4E0; --surface:#F2F2EF; --line:#CBCAC3; --ink:#191512; --ink-2:#4A423A; --ink-dim:#655C52; --edge:#848377;
+  --m-opus:#C0430A; --m-sonnet:hsl(205 55% 36%); --m-haiku:hsl(140 45% 30%); --m-fable:hsl(268 38% 46%); --m-other:#655C52;
+  --f-display:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
+  --f-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    color-scheme:dark; --ground:#0D0B0A; --surface:#151210; --line:#2E2721; --ink:#F2EBE0; --ink-2:#C3B7A8; --ink-dim:#A2968A; --edge:#7A6656;
+    --m-opus:#FF6A1F; --m-sonnet:hsl(205 60% 66%); --m-haiku:hsl(140 40% 56%); --m-fable:hsl(268 60% 76%); --m-other:#A2968A;
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--f-body);font-size:.9375rem;line-height:1.5;overflow:hidden}
+:focus-visible{outline:2px solid var(--m-opus);outline-offset:2px}
+.app{display:grid;grid-template-columns:272px minmax(0,1fr);height:100vh;height:100dvh}
+.rail{background:var(--surface);border-right:1px solid var(--line);padding:18px 16px;overflow:auto}
+h1{font:700 1.7rem/1 var(--f-display);letter-spacing:.02em;text-transform:uppercase;margin:0 0 4px}
+.sub{color:var(--ink-dim);font-size:.8rem;margin:0 0 16px}
+h2{font:400 .7rem var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-dim);margin:18px 0 6px}
+.key{display:flex;align-items:center;gap:8px;font-size:.85rem;margin:3px 0}
+.key svg{width:16px;height:16px;flex:none}
+#detail{font-size:.85rem;color:var(--ink-2);min-height:5em;overflow-wrap:anywhere}
+#detail b{display:block;color:var(--ink);font-size:.95rem;margin-bottom:4px}
+.stage{position:relative;min-width:0}
+svg#g{width:100%;height:100%;display:block}
+.link{stroke:var(--edge);stroke-width:1;opacity:.45}
+.link.parent{stroke-dasharray:4 3;opacity:.7}
+.link.more{opacity:0}
+.dim{opacity:.12!important}
+.link.more.dim{opacity:0!important}
+.on.link{opacity:1!important;stroke-width:1.6}
+.node{cursor:pointer}
+.node:focus-visible{outline:none}
+.node:focus-visible .shape,.node.sel .shape{stroke:var(--ink);stroke-width:2.5}
+.lbl{font:500 14px var(--f-mono);fill:var(--ink-2);pointer-events:none;paint-order:stroke;stroke:var(--ground);stroke-width:3px}
+.lbl.proj{font:700 24px var(--f-display);fill:var(--ink);letter-spacing:.04em;text-transform:uppercase}
+.lbl.agent{display:none}
+.node:hover .lbl.agent,.node.sel .lbl.agent{display:block}
+@media (max-width:760px){.app{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}.rail{border-right:0;border-bottom:1px solid var(--line);max-height:40vh}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <h1>Agent graph</h1>
+    <p class="sub">Projects, the folders agents worked in, and the agents. Size is fresh tokens. Hover or click an agent for its other folders. Scroll to zoom, drag to move, double-click to reset.</p>
+    <h2>Shape</h2>
+    <div class="key"><svg viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>project</div>
+    <div class="key"><svg viewBox="0 0 16 16"><path d="M8 2l6 6-6 6-6-6z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>folder</div>
+    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="currentColor"/></svg>chat</div>
+    <div class="key"><svg viewBox="0 0 16 16"><path d="M8 2l6 11H2z" fill="currentColor"/></svg>subagent (dashed line to its chat)</div>
+    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2 2"/></svg>smaller agents folded together</div>
+    <h2>Colour is the model</h2>
+    <div id="models"></div>
+    <h2>Details</h2>
+    <div id="detail">Click a node.</div>
+    <h2>What is shown</h2>
+    <p class="sub" id="caps"></p>
+  </aside>
+  <main class="stage"><svg id="g" role="img" aria-label="Agent graph: projects, folders and agents"></svg></main>
+</div>
+<script type="application/json" id="graph-data">/*__DATA__*/</script>
+<script>
+(function(){
+  const G = JSON.parse(document.getElementById("graph-data").textContent);
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.getElementById("g");
+  const el = (n, a, p) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e; };
+  const text = (e, t) => { e.textContent = t; return e; };
+  const MODELS = ["opus","sonnet","haiku","fable","other"];
+  const colour = f => "var(--m-" + (MODELS.includes(f) ? f : "other") + ")";
+  let vb = G.box.slice();
+  const apply = () => svg.setAttribute("viewBox", vb.join(" "));
+  apply();
+  // Wheel zooms toward the pointer, drag pans, double-click resets.
+  svg.addEventListener("wheel", ev => {
+    ev.preventDefault();
+    const r = svg.getBoundingClientRect(), k = ev.deltaY < 0 ? 0.85 : 1 / 0.85;
+    const fx = (ev.clientX - r.left) / r.width, fy = (ev.clientY - r.top) / r.height;
+    const w = Math.min(G.box[2] * 2, Math.max(G.box[2] / 12, vb[2] * k)), h = w * (vb[3] / vb[2]);
+    vb = [vb[0] + (vb[2] - w) * fx, vb[1] + (vb[3] - h) * fy, w, h]; apply();
+  }, {passive:false});
+  let drag = null;
+  svg.addEventListener("pointerdown", ev => { if (ev.target === svg) { drag = {x:ev.clientX, y:ev.clientY, vb:vb.slice()}; svg.setPointerCapture(ev.pointerId); } });
+  svg.addEventListener("pointermove", ev => { if (!drag) return; const r = svg.getBoundingClientRect();
+    vb = [drag.vb[0] - (ev.clientX - drag.x) * vb[2] / r.width, drag.vb[1] - (ev.clientY - drag.y) * vb[3] / r.height, vb[2], vb[3]]; apply(); });
+  svg.addEventListener("pointerup", () => { drag = null; });
+  svg.addEventListener("dblclick", () => { vb = G.box.slice(); apply(); });
+
+  document.getElementById("caps").textContent = "The biggest " + G.limits.agentsPerProject + " agents per project, " + G.limits.agentsTotal + " in total, ranked by fresh tokens. The rest are folded into one dashed node per project. Up to " + G.limits.foldersPerAgent + " folders per agent.";
+  const km = document.getElementById("models");
+  MODELS.forEach(m => { const d = document.createElement("div"); d.className = "key";
+    const s = el("svg", {viewBox:"0 0 16 16"}); el("circle", {cx:8, cy:8, r:5, fill:colour(m)}, s); d.appendChild(s); d.appendChild(document.createTextNode(m)); km.appendChild(d); });
+
+  const pos = new Map(G.nodes.map(n => [n.id, n]));
+  const linkEls = [];
+  const gl = el("g", {}, svg), gn = el("g", {}, svg);
+  G.links.forEach(l => { const a = pos.get(l.from), b = pos.get(l.to); if (!a || !b) return;
+    const e = el("line", {x1:a.x, y1:a.y, x2:b.x, y2:b.y, class:"link " + l.kind}, gl); linkEls.push({e, l}); });
+
+  const nodeEls = new Map();
+  let selected = null;
+  function shape(n, parent) {
+    const fill = n.type === "chat" || n.type === "subagent" ? colour(n.family) : "var(--surface)";
+    const common = {class:"shape", fill, stroke:"var(--ink-2)", "stroke-width":1.2};
+    if (n.type === "project") return el("rect", Object.assign({x:n.x-n.r, y:n.y-n.r, width:2*n.r, height:2*n.r, rx:4}, common), parent);
+    if (n.type === "folder") return el("path", Object.assign({d:`M${n.x} ${n.y-n.r}L${n.x+n.r} ${n.y}L${n.x} ${n.y+n.r}L${n.x-n.r} ${n.y}Z`}, common), parent);
+    if (n.type === "subagent") return el("path", Object.assign({d:`M${n.x} ${n.y-n.r}L${n.x+n.r} ${n.y+n.r*0.8}L${n.x-n.r} ${n.y+n.r*0.8}Z`}, common), parent);
+    if (n.type === "other") return el("circle", Object.assign({cx:n.x, cy:n.y, r:n.r}, common, {fill:"none", "stroke-dasharray":"2 2"}), parent);
+    return el("circle", Object.assign({cx:n.x, cy:n.y, r:n.r}, common), parent);
+  }
+  G.nodes.forEach(n => {
+    const g = el("g", {class:"node", tabindex:"0", role:"button", "aria-label":n.type + ": " + n.label}, gn);
+    shape(n, g);
+    const isAgent = n.type === "chat" || n.type === "subagent";
+    const cls = n.type === "project" ? "lbl proj" : isAgent ? "lbl agent" : "lbl";
+    text(el("text", {x:n.x, y:n.y + (n.type === "project" ? -n.r - 6 : n.r + 13), "text-anchor":"middle", class:cls}, g), n.label);
+    g.addEventListener("mouseenter", () => focus(n.id)); g.addEventListener("mouseleave", () => focus(selected));
+    g.addEventListener("focus", () => focus(n.id)); g.addEventListener("blur", () => focus(selected));
+    g.addEventListener("click", () => select(n.id));
+    g.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(n.id); } });
+    nodeEls.set(n.id, g);
+  });
+
+  function focus(id) {
+    const near = new Set(id ? [id] : []);
+    linkEls.forEach(({e, l}) => {
+      const hit = id && (l.from === id || l.to === id);
+      if (hit) { near.add(l.from); near.add(l.to); }
+      e.classList.toggle("on", !!hit); e.classList.toggle("dim", !!id && !hit);
+    });
+    nodeEls.forEach((g, nid) => g.classList.toggle("dim", !!id && !near.has(nid)));
+  }
+  function select(id) {
+    selected = selected === id ? null : id;
+    nodeEls.forEach((g, nid) => g.classList.toggle("sel", nid === selected));
+    const d = document.getElementById("detail"); d.textContent = "";
+    const n = pos.get(selected);
+    if (!n) { d.textContent = "Click a node."; focus(null); return; }
+    const b = document.createElement("b"); b.textContent = n.label; d.appendChild(b);
+    d.appendChild(document.createTextNode(n.detail || n.type));
+    focus(selected);
+  }
+})();
+</script>
+</body>
+</html>
