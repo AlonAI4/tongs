@@ -79,7 +79,7 @@ circle,path,line{vector-effect:non-scaling-stroke}
     <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="currentColor" fill-opacity=".3" stroke="currentColor" stroke-width="1.5"/></svg>subagent</div>
     <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 2"/></svg>small chats folded together</div>
     <div class="key"><svg viewBox="0 0 16 16"><path d="M1 12Q8 2 15 12" fill="none" stroke="currentColor" stroke-width="2"/></svg>chats of one project working in another</div>
-    <h2>Orange is working now</h2>
+    <h2>Orange was working when made</h2>
     <div id="models"></div>
     <h2>Time</h2>
     <div class="time">
@@ -109,7 +109,7 @@ circle,path,line{vector-effect:non-scaling-stroke}
 
   // ---------- legend
   const km = document.getElementById("models");
-  [["active (last " + G.activeMin + " min)", "var(--m-opus)"], ["idle", "var(--idle)"]].forEach(([name, c]) => { const d = document.createElement("div"); d.className = "key";
+  [["active: wrote in the " + G.activeMin + " min before " + G.generated.slice(11) + " UTC", "var(--m-opus)"], ["idle", "var(--idle)"]].forEach(([name, c]) => { const d = document.createElement("div"); d.className = "key";
     const s = el("svg", {viewBox:"0 0 16 16"}); el("circle", {cx:8, cy:8, r:5, fill:c}, s); d.appendChild(s); d.appendChild(document.createTextNode(name)); km.appendChild(d); });
   document.getElementById("caps").textContent = "Every chat with at least " + G.limits.foldBelow + " fresh tokens. " + G.folded +
     " smaller chats are folded into one dashed circle per project. The " + G.limits.projects + " busiest projects are top-level circles; the rest sit in \"smaller projects\". Up to " +
@@ -137,7 +137,7 @@ circle,path,line{vector-effect:non-scaling-stroke}
     const g = el("g", {class:"node" + (n.overlay ? " off" : ""), tabindex:"0", role:"button", "aria-label":n.type + ": " + n.label}, layer);
     const cls = {project:"c-project", group:"c-group", folder:"c-folder", small:"c-small", chat:"c-chat", subagent:"c-chat c-sub"}[n.type];
     const a = {class:"shape " + cls, cx:n.x, cy:n.y, r:n.r};
-    if (isLeaf(n)) { a.fill = stateColour(n); if (n.type === "subagent") a.stroke = stateColour(n); }
+    if (isLeaf(n)) { a.fill = stateColour(n); if (n.type === "subagent") a.style = "stroke:" + stateColour(n); }
     el("circle", a, g);
     let badge = null;
     if (n.subs) {

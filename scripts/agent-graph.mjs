@@ -22,7 +22,7 @@
 //
 // Privacy: the page holds only model names, counts, project names and top-level folder names. Never
 // message text, prompts, full paths, session ids or your home folder. Output is sorted and has no
-// timestamps, so the same logs give the same bytes. Zero dependencies, works offline.
+// timestamps except `generated` (the minute the page was made, for the orange "active" circles), so the same logs and the same minute give the same bytes. Zero dependencies, works offline.
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
@@ -89,7 +89,7 @@ export function placeOf(p, own, home) {
 }
 
 export function modelName(m) {
-  const x = /^claude-([a-z]+)-(\d+(?:-\d+)?)/.exec(String(m || ""));
+  const x = /^claude-([a-z]+)-(\d+(?:-\d{1,2})?)(?!\d)/.exec(String(m || ""));
   return x ? `${x[1]} ${x[2].replace("-", ".")}` : "other";
 }
 const family = name => (/^(opus|sonnet|haiku|fable|mythos)/.exec(name) || ["other"])[0];
@@ -479,7 +479,7 @@ export function buildGraph(agents, now = Date.now()) {
   const days = [...new Set(nodes.filter(n => n.first).map(n => n.first.slice(0, 10)))].sort();
   const PAD = 20;
   return { nodes, bridges, days, box: [-PAD, -PAD, REF_W + 2 * PAD, REF_W + 2 * PAD], limits: LIMITS, levels: LEVELS, refW: REF_W,
-    activeMin: ACTIVE_MIN, active: nodes.filter(n => n.last && minuteOf(n.last) >= Math.floor(now / 60000) - ACTIVE_MIN).map(n => n.id),
+    generated: new Date(Math.floor(now / 60000) * 60000).toISOString().slice(0, 16), activeMin: ACTIVE_MIN, active: nodes.filter(n => n.last && minuteOf(n.last) >= Math.floor(now / 60000) - ACTIVE_MIN).map(n => n.id),
     folded: [...folded.values()].reduce((s, x) => s + x.n, 0) };
 }
 

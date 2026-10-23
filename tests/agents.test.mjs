@@ -301,3 +301,16 @@ test("the page draws active circles orange and idle ones grey", async () => {
   assert.match(html, /ACTIVE\.has\(n\.id\) \? "var\(--m-opus\)" : "var\(--idle\)"/);
   assert.match(html, /--idle:#/);
 });
+
+test("model names: a dated id keeps its version, not the date", async () => {
+  const { modelName } = await import("../scripts/agent-graph.mjs");
+  assert.equal(modelName("claude-opus-5-5"), "opus 5.5");
+  assert.equal(modelName("claude-haiku-4-5-20251001"), "haiku 4.5");
+  assert.equal(modelName("claude-opus-4-20250514"), "opus 4");
+});
+
+test("subagent rings take the active/idle colour through style, not an attribute the CSS overrides", () => {
+  const html = readFileSync(join(dirname(SCRIPT), "agents-template.html"), "utf8");
+  assert.match(html, /a\.style = "stroke:" \+ stateColour\(n\)/);
+  assert.match(html, /G\.generated/);
+});
