@@ -74,6 +74,34 @@ async function measure($: EngineInterface): Promise<Size> {
   return { size, max, at: label + ' ' + k(max), pct }
 }
 
+// After a compact: the size slides from before to after, then a green line stays for a while.
+type Done = { before: number | undefined; after: number | undefined; shown: number | undefined }
+let done: Done | undefined
+let slide: { cancel: () => void } | undefined
+const SLIDE_STEPS = 14
+const SLIDE_MS = 70
+const GREEN_MS = 12000
+
+function celebrate($: EngineInterface, before?: number, after?: number) {
+  slide?.cancel()
+  done = { before, after, shown: before }
+  $.ui.invalidate('ui.render')
+  let step = 0
+  try { slide = $.clock.every(SLIDE_MS, () => {
+    if (!done) return
+    step++
+    if (before !== undefined && after !== undefined && step < SLIDE_STEPS) {
+      const t = step / SLIDE_STEPS
+      done.shown = Math.round(before + (after - before) * (1 - (1 - t) * (1 - t))) // eases out
+    } else {
+      done.shown = after
+      slide?.cancel()
+      try { $.clock.after(GREEN_MS, () => { done = undefined; $.ui.invalidate('ui.render') }) } catch {}
+    }
+    $.ui.invalidate('ui.render')
+  }) } catch { done.shown = after } // no timer here: show the end state, the next message clears it
+}
+
 let tongsRan = false // /tongs ran this turn: its /compact line, if any, is run when the turn ends
 
 async function compact($: EngineInterface, given?: string) {
@@ -84,6 +112,7 @@ async function compact($: EngineInterface, given?: string) {
     else {
       const sizes = r.tokensBefore && r.tokensAfter ? ' ' + k(r.tokensBefore) + ' -> ' + k(r.tokensAfter) + '.' : ''
       $.ui.toast(`Compacted.${sizes} The meter updates after your next message.`)
+      celebrate($, r.tokensBefore, r.tokensAfter)
     }
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e)
@@ -93,6 +122,7 @@ async function compact($: EngineInterface, given?: string) {
       try {
         await $.command.run({ command: 'compact', args: instructions })
         $.ui.toast('Compacting... The meter updates after your next message.')
+        celebrate($)
         return
       } catch (e2) {
         $.ui.toast(`Could not compact: ${e2 instanceof Error ? e2.message : String(e2)}`)
@@ -127,6 +157,7 @@ export const register: Register = on => {
   // Past the limit, each message the person sends carries the reminder for Claude. A slash
   // command's line takes no rewrite, so it goes as it is.
   on('prompt.submit', async ($, e, next) => {
+    done = undefined // the next message shows the real, measured size again
     if (e.command) return next(e)
     let note: string | undefined
     try {
@@ -155,14 +186,21 @@ export const register: Register = on => {
     const below = await next(e) // keep whatever else draws here
     if (e.props.hasSurvey) return below
     const { Box, Button, Text } = $.ui.resolve(e)
-    const { size, at, pct } = await measure($)
+    const m = await measure($)
+    const { at } = m
+    // While the compact slide or the green line shows, draw the sliding size, not the old one.
+    const size = done && done.shown !== undefined ? done.shown : m.size
+    const pct = done && done.shown !== undefined ? Math.floor((done.shown * 100) / m.max) : m.pct
     const isBig = size !== undefined && pct >= WARN_AT
     if (pct < 100) notNow = false
-    const ask = pct >= 100 && !notNow
+    const ask = !done && pct >= 100 && !notNow
 
     // Colour AND words, so it never relies on colour alone.
     let line
-    if (size === undefined) line = <Text dimColor>chat size shows after the first reply · {at}</Text>
+    if (done) {
+      const sliding = done.after !== undefined && done.shown !== done.after
+      line = <Text color="success" bold>{sliding ? 'compacting' : 'compacted'} · chat {size === undefined ? '' : k(size) + ' / msg · ' + pct + '%'}</Text>
+    } else if (size === undefined) line = <Text dimColor>chat size shows after the first reply · {at}</Text>
     else if (ask) line = <Text color="error" bold>chat {k(size)} / msg · {at} · {pct}%, do you want to compact?</Text>
     else if (pct >= DANGER_AT) line = <Text color="error" bold>chat {k(size)} / msg · {at} · {pct}%, run /tongs now</Text>
     else if (isBig) line = <Text color="warning">chat {k(size)} / msg · {at} · {pct}%, map it soon with /tongs</Text>
