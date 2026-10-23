@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readLogs, buildGraph, projectOf, placeOf, LIMITS } from "../scripts/agent-graph.mjs";
+import { readLogs, buildGraph, projectOf, placeOf, packSiblings, labelBox, LIMITS, LEVELS } from "../scripts/agent-graph.mjs";
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "agent-graph.mjs");
 const TMP = mkdtempSync(join(tmpdir(), "tongs-agents-"));
@@ -22,11 +22,11 @@ function newHome() {
 const logsOf = home => join(home, ".claude", "projects");
 
 // One assistant log line (one content block per line, like the real logs).
-function line({ id, req = "r-" + id, model = "claude-opus-5-5", inp = 10, out = 5, cw = 0, cr = 100, cwd, tools = [], text }) {
+function line({ id, req = "r-" + id, model = "claude-opus-5-5", inp = 10, out = 5, cw = 0, cr = 100, cwd, tools = [], text, ts = "2026-10-23T10:00:00Z" }) {
   const content = tools.map((t, i) => ({ type: "tool_use", id: `${id}-t${i}`, name: t.name || "Read", input: t.input }));
   if (text) content.push({ type: "text", text });
   return JSON.stringify({
-    type: "assistant", requestId: req, cwd, timestamp: "2026-10-23T10:00:00Z",
+    type: "assistant", requestId: req, cwd, timestamp: ts,
     message: { id, role: "assistant", model, content, usage: { input_tokens: inp, output_tokens: out, cache_creation_input_tokens: cw, cache_read_input_tokens: cr } },
   });
 }
@@ -70,16 +70,6 @@ test("the same message in a chat file and a subagent file is counted once; fresh
   assert.equal(agents.reduce((s, a) => s + a.cached, 0), 10000 + 3 + 30);
 });
 
-test("a subagent is linked to its parent chat", async () => {
-  const home = newHome(), cwd = home + "/forge";
-  write(home, "-p/s1.jsonl", [line({ id: "a1", cwd })]);
-  write(home, "-p/s1/subagents/agent-a.jsonl", [line({ id: "a2", cwd })]);
-  const { graph } = await read(home);
-  const sub = graph.nodes.find(x => x.type === "subagent"), chat = graph.nodes.find(x => x.type === "chat");
-  assert.ok(sub && chat);
-  assert.ok(graph.links.some(l => l.kind === "parent" && l.from === chat.id && l.to === sub.id));
-});
-
 test("folders come from file_path and path; Bash text is ignored; tmp paths are scratch, not 'shared'", async () => {
   const home = newHome(), cwd = home + "/forge";
   write(home, "-p/s1.jsonl", [
@@ -88,27 +78,6 @@ test("folders come from file_path and path; Bash text is ignored; tmp paths are 
   ]);
   const { agents } = await read(home);
   assert.deepEqual([...agents[0].folders.entries()].sort(), [["forge\tpackages", 1], ["forge\tscratch", 1], ["forge\tscripts", 1]]);
-});
-
-test("an agent that works in another project draws a crossing edge and a project-to-project bridge", async () => {
-  const home = newHome(), a = home + "/forge", b = home + "/ai-tracker";
-  write(home, "-p/s1.jsonl", [line({ id: "x1", out: 900, cwd: a, tools: [{ input: { file_path: a + "/src/a.js" } }, { input: { file_path: b + "/projects/forge.json" } }] })]);
-  write(home, "-q/s2.jsonl", [line({ id: "x2", out: 800, cwd: b, tools: [{ input: { file_path: b + "/maps/a.md" } }] })]);
-  const { graph } = await read(home);
-  const chat = graph.nodes.find(n => n.type === "chat" && /Folders: src/.test(n.detail));
-  assert.match(chat.detail, /Also worked in: ai-tracker/);
-  assert.ok(graph.nodes.some(n => n.id === "f:ai-tracker:projects"), "the reached-into folder exists in the other project");
-  assert.ok(graph.links.some(l => l.kind === "cross" && l.from === "f:ai-tracker:projects" && l.to === chat.id));
-  assert.ok(graph.links.some(l => l.kind === "bridge" && l.from === "p:forge" && l.to === "p:ai-tracker" && l.n === 1));
-});
-
-test("caps: extra agents fold into one 'other agents (n)' node and the cap is not exceeded", async () => {
-  const home = newHome(), cwd = home + "/forge";
-  for (let i = 0; i < LIMITS.agentsPerProject + 5; i++) write(home, `-p/s${i}.jsonl`, [line({ id: "c" + i, out: 1000 - i, cwd })]);
-  const { graph } = await read(home);
-  assert.equal(graph.nodes.filter(x => x.type === "chat").length, LIMITS.agentsPerProject);
-  const other = graph.nodes.find(x => x.type === "other");
-  assert.match(other.label, /^other agents \(5\)$/);
 });
 
 test("bad lines are skipped and reported with file and line number; exit code stays 0", () => {
@@ -173,4 +142,138 @@ test("a line holding U+2028 inside its text is one line, not a bad line", async 
   const r = await readLogs(logsOf(home), { home });
   assert.deepEqual(r.problems, []);
   assert.equal(r.agents[0].fresh, 30);
+});
+
+// ---------------------------------------------------------------- round 3: circles, families, time
+
+const big = 500; // fresh tokens: above LIMITS.foldBelow, so the chat is shown
+const nodeOf = (g, pred) => g.nodes.find(pred);
+
+test("subagents are collapsed into their chat: the badge count is the real number, each says who started it and when", async () => {
+  const home = newHome(), cwd = home + "/forge";
+  write(home, "-p/s1.jsonl", [line({ id: "a1", out: big, cwd, ts: "2026-10-20T09:00:00Z" })]);
+  for (const k of ["a", "b", "c"]) write(home, `-p/s1/subagents/agent-${k}.jsonl`, [line({ id: "a2" + k, cwd, ts: "2026-10-20T09:15:30Z" })]);
+  const { graph } = await read(home);
+  const chat = nodeOf(graph, n => n.type === "chat");
+  assert.equal(chat.subs.length, 3);
+  const subs = graph.nodes.filter(n => n.overlay);
+  assert.equal(subs.length, 3);
+  for (const s of subs) {
+    assert.equal(s.parent, chat.id);
+    assert.match(s.detail, new RegExp(`started by the chat "${chat.label}" at 2026-10-20 09:15 UTC`));
+  }
+  assert.match(chat.detail, /including 3 subagents/);
+});
+
+test("every chat above the threshold is shown, smaller ones fold into one 'small chats (n)' circle", async () => {
+  const home = newHome(), cwd = home + "/forge";
+  for (let i = 0; i < 40; i++) write(home, `-p/s${i}.jsonl`, [line({ id: "c" + i, inp: 0, out: big + i, cwd })]);
+  for (let i = 0; i < 4; i++) write(home, `-p/t${i}.jsonl`, [line({ id: "t" + i, inp: 0, out: LIMITS.foldBelow - 1, cwd })]);
+  const { graph } = await read(home);
+  assert.equal(graph.nodes.filter(n => n.type === "chat").length, 40, "no cap on chats any more");
+  assert.equal(nodeOf(graph, n => n.type === "small").label, "small chats (4)");
+  assert.equal(graph.folded, 4);
+});
+
+test("work in another project: the chat points at that project's folder, and one bridge joins the two circles", async () => {
+  const home = newHome(), a = home + "/forge", b = home + "/ai-tracker";
+  write(home, "-p/s1.jsonl", [line({ id: "x1", out: 900, cwd: a, tools: [{ input: { file_path: a + "/src/a.js" } }, { input: { file_path: b + "/projects/forge.json" } }] })]);
+  write(home, "-q/s2.jsonl", [line({ id: "x2", out: 800, cwd: b, tools: [{ input: { file_path: b + "/maps/a.md" } }] })]);
+  const { graph } = await read(home);
+  const chat = nodeOf(graph, n => n.type === "chat" && /Folders: src/.test(n.detail));
+  assert.match(chat.detail, /Also worked in: ai-tracker/);
+  assert.deepEqual(chat.cross, ["f:ai-tracker:projects"]);
+  assert.ok(nodeOf(graph, n => n.id === "f:ai-tracker:projects" && n.parent === "p:ai-tracker"));
+  assert.deepEqual(graph.bridges, [{ from: "p:forge", to: "p:ai-tracker", n: 1 }]);
+});
+
+test("a sibling project under a container folder keeps its own name, even if only reached into", async () => {
+  const home = newHome(), z = home + "/tools/zenith", mc = home + "/tools/zenith-mc";
+  write(home, "-p/s1.jsonl", [line({ id: "z1", out: big, cwd: z, tools: [{ input: { file_path: mc + "/src/Mod.java" } }] })]);
+  const { graph } = await read(home);
+  assert.ok(nodeOf(graph, n => n.id === "p:zenith"));
+  assert.ok(nodeOf(graph, n => n.id === "p:zenith-mc" && n.type === "project"), "zenith-mc is its own circle, not 'other'");
+  assert.ok(nodeOf(graph, n => n.id === "f:zenith-mc:src"));
+  assert.ok(!graph.nodes.some(n => n.label === "other"));
+});
+
+test("a chat with no file paths creates no extra folder: it sits in its project, or in the folder it was started in", async () => {
+  const home = newHome(), cwd = home + "/forge";
+  write(home, "-p/s1.jsonl", [line({ id: "n1", out: big, cwd })]);
+  write(home, "-p/s2.jsonl", [line({ id: "n2", out: big, cwd: cwd + "/bench" })]);
+  const { graph } = await read(home);
+  assert.ok(!graph.nodes.some(n => /no file calls/.test(n.label)));
+  const [a, b] = graph.nodes.filter(n => n.type === "chat").sort((x, y) => (x.parent < y.parent ? -1 : 1));
+  assert.equal(a.parent, "f:forge:bench");
+  assert.equal(b.parent, "p:forge");
+});
+
+test("times come from the logs: first start per chat at minute precision, and the day list for the time filter", async () => {
+  const home = newHome(), cwd = home + "/forge";
+  write(home, "-p/s1.jsonl", [line({ id: "d1", out: big, cwd, ts: "2026-10-21T08:05:59Z" }), line({ id: "d2", cwd, ts: "2026-10-22T10:00:00Z" })]);
+  write(home, "-p/s2.jsonl", [line({ id: "d3", out: big, cwd, ts: "2026-10-19T23:59:00Z" })]);
+  const { graph } = await read(home);
+  assert.deepEqual(graph.nodes.filter(n => n.type === "chat").map(n => n.first).sort(), ["2026-10-19T23:59", "2026-10-21T08:05"]);
+  assert.deepEqual(graph.days, ["2026-10-19", "2026-10-21"]);
+});
+
+test("packSiblings: no two circles overlap, for many sizes", () => {
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (const count of [1, 2, 3, 10, 120]) {
+    const cs = Array.from({ length: count }, () => ({ r: 1 + rnd() * 30 }));
+    const R = packSiblings(cs);
+    for (let i = 0; i < cs.length; i++) {
+      assert.ok(Math.hypot(cs[i].x, cs[i].y) + cs[i].r <= R + 1e-6, "inside the enclosing circle");
+      for (let j = i + 1; j < cs.length; j++) assert.ok(Math.hypot(cs[i].x - cs[j].x, cs[i].y - cs[j].y) >= cs[i].r + cs[j].r - 1e-6, `circles ${i} and ${j} overlap`);
+    }
+  }
+});
+
+// A busy fixture: several projects, folders, sizes, crossings and subagents.
+async function busy() {
+  const home = newHome();
+  const projects = ["forge", "ai-tracker", "tools/zenith", "tongs", "site"];
+  let k = 0;
+  projects.forEach((p, pi) => {
+    const cwd = home + "/" + p;
+    for (let i = 0; i < 9; i++) {
+      const folder = ["src", "tests", "scripts", "docs"][i % 4];
+      const tools = [{ input: { file_path: `${cwd}/${folder}/f${i}.js` } }];
+      if (i % 3 === 0) tools.push({ input: { file_path: `${home}/${projects[(pi + 1) % projects.length]}/src/x.js` } });
+      write(home, `-p${pi}/s${i}.jsonl`, [line({ id: "m" + k++, inp: 0, out: 120 + (i * 977 + pi * 331) % 9000, cwd, tools, ts: `2026-10-${10 + i}T10:00:00Z` })]);
+      if (i % 4 === 1) write(home, `-p${pi}/s${i}/subagents/agent-x.jsonl`, [line({ id: "m" + k++, out: 300, cwd })]);
+    }
+  });
+  return (await read(home)).graph;
+}
+
+test("nested packing: children stay inside their parent and siblings never overlap", async () => {
+  const g = await busy(), byId = new Map(g.nodes.map(n => [n.id, n]));
+  const placed = g.nodes.filter(n => !n.overlay);
+  for (const n of placed) if (n.parent) {
+    const p = byId.get(n.parent);
+    assert.ok(Math.hypot(n.x - p.x, n.y - p.y) + n.r <= p.r + 0.05, `${n.id} sticks out of ${p.id}`);
+  }
+  for (let i = 0; i < placed.length; i++) for (let j = i + 1; j < placed.length; j++) {
+    const a = placed[i], b = placed[j];
+    if (a.parent !== b.parent) continue;
+    assert.ok(Math.hypot(a.x - b.x, a.y - b.y) >= a.r + b.r - 0.05, `${a.id} overlaps ${b.id}`);
+  }
+});
+
+test("labels never overlap at any zoom level the page uses", async () => {
+  const g = await busy();
+  let shownSomewhere = 0;
+  LEVELS.forEach((z, i) => {
+    const boxes = g.nodes.filter(n => !n.overlay && ((n.lv || 0) >> i) & 1).map(n => ({ n, ...labelBox(n, z) }));
+    shownSomewhere += boxes.length;
+    let collisions = 0;
+    for (let a = 0; a < boxes.length; a++) for (let b = a + 1; b < boxes.length; b++) {
+      const p = boxes[a], q = boxes[b];
+      if (p.x0 < q.x1 && q.x0 < p.x1 && p.y0 < q.y1 && q.y0 < p.y1) collisions++;
+    }
+    assert.equal(collisions, 0, `zoom ${z}`);
+  });
+  assert.ok(shownSomewhere > 0);
+  assert.ok(g.nodes.filter(n => n.type === "project").every(n => n.lv), "every project gets a label at some zoom");
 });

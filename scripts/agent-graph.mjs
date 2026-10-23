@@ -33,7 +33,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const LIMITS = { agentsPerProject: 25, agentsTotal: 60, foldersPerAgent: 5, projects: 6 };
+export const LIMITS = { projects: 12, foldersPerAgent: 5, foldBelow: 100 };
 const CONTAINERS = new Set(["tools", "projects", "code", "dev", "src", "repos", "work"]);
 const PATH_KEYS = ["file_path", "path", "notebook_path"];
 
@@ -109,7 +109,7 @@ export async function readLogs(logsDir, { days = 14, home = homedir() } = {}) {
     const key = rel.join("/");
     const agent = {
       id: "a" + hash(key), parentKey: null,
-      sub, project: null, fresh: 0, cached: 0, models: new Map(), folders: new Map(), tools: new Set(),
+      sub, project: null, cwdFolder: null, first: null, last: null, fresh: 0, cached: 0, models: new Map(), folders: new Map(), tools: new Set(),
     };
     // a subagent's parent chat file sits next to its folder: <proj>/<session>.jsonl
     if (sub) agent.parentKey = "a" + hash(rel.slice(0, -3).concat(session + ".jsonl").join("/"));
@@ -126,6 +126,15 @@ export async function readLogs(logsDir, { days = 14, home = homedir() } = {}) {
       if (!agent.project && typeof d.cwd === "string") {
         const p = projectOf(d.cwd, home);
         agent.project = p.name;
+        // the folder inside the project the chat was started in, for agents that never touch a file path
+        const rel = p.root ? relative(p.root, d.cwd).split(sep)[0] : "";
+        if (rel && rel !== ".." && !rel.startsWith(".")) agent.cwdFolder = rel;
+      }
+      // times come from the logs (minute precision), never the clock, so the page stays deterministic
+      if (typeof d.timestamp === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(d.timestamp)) {
+        const t = d.timestamp.slice(0, 16);
+        if (!agent.first || t < agent.first) agent.first = t;
+        if (!agent.last || t > agent.last) agent.last = t;
       }
       for (const b of Array.isArray(m.content) ? m.content : []) {
         if (!b || b.type !== "tool_use" || !b.input || agent.tools.has(b.id)) continue;
@@ -152,102 +161,321 @@ export async function readLogs(logsDir, { days = 14, home = homedir() } = {}) {
   return { agents: [...agents.values()].filter(a => a.fresh + a.cached > 0), problems, files: files.length, lines };
 }
 
-// ---------------------------------------------------------------- building the graph
-const byCount = (x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1);
+// ---------------------------------------------------------------- circle packing
+// Front-chain sibling packing and the smallest enclosing circle, the same method d3-hierarchy uses,
+// written here so Tongs keeps zero dependencies. The shuffle is seeded, so the layout is deterministic.
 
-export function buildGraph(agents) {
-  // projects ranked by fresh tokens; the smallest are merged into "other"
-  const total = new Map();
-  for (const a of agents) total.set(a.project || "other", (total.get(a.project || "other") || 0) + a.fresh);
-  const ranked = [...total.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(e => e[0]);
-  const keep = new Set(ranked.filter(p => p !== "other").slice(0, LIMITS.projects - 1));
-  const shownName = p => (keep.has(p) ? p : "other");
-  const byId = new Map(agents.map(a => [a.id, a]));
-  // A subagent sits in its parent chat's project, so dashed parent lines never cross projects.
-  const projectName = a => {
-    const parent = a.sub && byId.get(a.parentKey);
-    return shownName(parent ? parent.project : a.project);
-  };
+function lcg() { let s = 1; return () => (s = (1664525 * s + 1013904223) % 4294967296) / 4294967296; }
 
-  const sorted = [...agents].sort((a, b) => b.fresh - a.fresh || (a.id < b.id ? -1 : 1));
-  const perProject = new Map(), shown = [], folded = new Map();
-  for (const a of sorted) {
-    const p = projectName(a), c = perProject.get(p) || 0;
-    if (c < LIMITS.agentsPerProject && shown.length < LIMITS.agentsTotal) { perProject.set(p, c + 1); shown.push(a); }
-    else { const f = folded.get(p) || { n: 0, fresh: 0, cached: 0 }; f.n++; f.fresh += a.fresh; f.cached += a.cached; folded.set(p, f); }
+function place(b, a, c) {
+  const dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy;
+  if (!d2) { c.x = a.x + c.r; c.y = a.y; return; }
+  let a2 = a.r + c.r; a2 *= a2;
+  let b2 = b.r + c.r; b2 *= b2;
+  if (a2 > b2) {
+    const x = (d2 + b2 - a2) / (2 * d2), y = Math.sqrt(Math.max(0, b2 / d2 - x * x));
+    c.x = b.x - x * dx - y * dy; c.y = b.y - x * dy + y * dx;
+  } else {
+    const x = (d2 + a2 - b2) / (2 * d2), y = Math.sqrt(Math.max(0, a2 / d2 - x * x));
+    c.x = a.x + x * dx - y * dy; c.y = a.y + x * dy + y * dx;
   }
-  const shownIds = new Set(shown.map(a => a.id));
-  const projects = [...new Set([...shown.map(projectName), ...folded.keys()])].sort((a, b) =>
-    (total.get(b) || 0) - (total.get(a) || 0) || (a < b ? -1 : 1));
+}
+function intersects(a, b) { const dr = a.r + b.r - 1e-6, dx = b.x - a.x, dy = b.y - a.y; return dr > 0 && dr * dr > dx * dx + dy * dy; }
+function score(n) {
+  const a = n.c, b = n.next.c, ab = a.r + b.r, dx = (a.x * b.r + b.x * a.r) / ab, dy = (a.y * b.r + b.y * a.r) / ab;
+  return dx * dx + dy * dy;
+}
 
-  // each agent's folders as { project (as shown), folder, n }: own project first, the rest are crossings
-  const placesOf = a => {
-    const own = projectName(a);
-    const all = [...a.folders.entries()].sort(byCount).map(([k, n]) => { const [pr, folder] = k.split("\t"); return { project: shownName(pr), folder, n }; });
-    const mine = all.filter(f => f.project === own).slice(0, LIMITS.foldersPerAgent);
-    const cross = all.filter(f => f.project !== own && projects.includes(f.project)).slice(0, LIMITS.foldersPerAgent);
-    return { own, mine: mine.length ? mine : [{ project: own, folder: "(no file calls)", n: 1 }], cross };
-  };
-  const places = new Map(shown.map(a => [a.id, placesOf(a)]));
-
-  const nodes = [], links = [], bridge = new Map();
-  const maxFresh = Math.max(1, ...shown.map(a => a.fresh));
-  const cols = Math.min(projects.length, 3), CELL = 520;
-  const fid = (p, f) => `f:${p}:${f}`;
-
-  projects.forEach((p, pi) => {
-    const cx = (pi % cols) * CELL + CELL / 2, cy = Math.floor(pi / cols) * CELL + CELL / 2;
-    const mine = shown.filter(a => projectName(a) === p);
-    // folders in this project's ring: its agents' own folders, and where other projects' agents reach in
-    const names = new Set();
-    for (const a of shown) { const pl = places.get(a.id); if (pl.own === p) pl.mine.forEach(f => names.add(f.folder)); pl.cross.forEach(f => { if (f.project === p) names.add(f.folder); }); }
-    const folderNames = [...names].sort();
-    const ang = new Map(folderNames.map((f, i) => [f, (i / Math.max(1, folderNames.length)) * 2 * Math.PI - Math.PI / 2]));
-    nodes.push({ id: "p:" + p, type: "project", label: p, x: cx, y: cy, r: 24, detail: `${mine.length} agents shown` });
-    for (const f of folderNames) {
-      nodes.push({ id: fid(p, f), type: "folder", label: f, x: Math.round(cx + 105 * Math.cos(ang.get(f))), y: Math.round(cy + 105 * Math.sin(ang.get(f))), r: 7,
-        detail: f === "scratch" ? "Temporary files, outside your projects." : "A folder inside the project." });
-      links.push({ from: "p:" + p, to: fid(p, f), kind: "main" });
-    }
-    const slot = new Map();
-    for (const a of mine) {
-      const pl = places.get(a.id), main = pl.mine[0].folder;
-      const j = slot.get(main) || 0; slot.set(main, j + 1);
-      const th = (ang.get(main) ?? 0) + (((j % 2) ? 1 : -1) * Math.ceil(j / 2) * 0.16), rad = 185 + (j % 3) * 26;
-      const mods = [...a.models.entries()].sort(byCount);
-      nodes.push({
-        id: a.id, type: a.sub ? "subagent" : "chat", label: `${mods[0][0]} · ${fmt(a.fresh)}`, family: family(mods[0][0]),
-        x: Math.round(cx + rad * Math.cos(th)), y: Math.round(cy + rad * Math.sin(th)), r: Math.round((4 + 12 * Math.sqrt(a.fresh / maxFresh)) * 10) / 10,
-        detail: `${a.sub ? "Subagent" : "Chat"} in ${p}. Fresh tokens ${fmt(a.fresh)}, cached ${fmt(a.cached)}. Models: ${mods.map(m => m[0]).join(", ")}. ` +
-          `Folders: ${pl.mine.map(f => f.folder + " (" + f.n + ")").join(", ")}.` +
-          (pl.cross.length ? ` Also worked in: ${[...new Set(pl.cross.map(f => f.project))].join(", ")}.` : ""),
-      });
-      links.push({ from: fid(p, main), to: a.id, kind: "main" });
-      for (const f of pl.mine.slice(1)) links.push({ from: fid(p, f.folder), to: a.id, kind: "more" });
-      for (const f of pl.cross) {
-        links.push({ from: fid(f.project, f.folder), to: a.id, kind: "cross" });
-        bridge.set(p + "\t" + f.project, (bridge.get(p + "\t" + f.project) || new Set()).add(a.id));
+// Packs circles {r} around (0,0) without overlaps; returns the radius of the circle that holds them.
+export function packSiblings(circles) {
+  const n = circles.length;
+  if (!n) return 0;
+  let a = circles[0], b, c;
+  a.x = 0; a.y = 0;
+  if (n === 1) return a.r;
+  b = circles[1]; a.x = -b.r; b.x = a.r; b.y = 0;
+  if (n === 2) return a.r + b.r;
+  place(b, a, c = circles[2]);
+  a = { c: a }; b = { c: b }; c = { c };
+  a.next = c.previous = b; b.next = a.previous = c; c.next = b.previous = a;
+  pack: for (let i = 3; i < n; ++i) {
+    place(a.c, b.c, circles[i]); c = { c: circles[i] };
+    let j = b.next, k = a.previous, sj = b.c.r, sk = a.c.r;
+    do {
+      if (sj <= sk) {
+        if (intersects(j.c, c.c)) { b = j; a.next = b; b.previous = a; --i; continue pack; }
+        sj += j.c.r; j = j.next;
+      } else {
+        if (intersects(k.c, c.c)) { a = k; a.next = b; b.previous = a; --i; continue pack; }
+        sk += k.c.r; k = k.previous;
       }
-      if (a.sub && a.parentKey && shownIds.has(a.parentKey)) links.push({ from: a.parentKey, to: a.id, kind: "parent" });
-    }
-    const f = folded.get(p);
-    if (f) {
-      nodes.push({ id: "o:" + p, type: "other", label: `other agents (${f.n})`, x: cx, y: Math.round(cy + 255), r: 8,
-        detail: `${f.n} smaller agents folded together. Fresh tokens ${fmt(f.fresh)}, cached ${fmt(f.cached)}.` });
-      links.push({ from: "p:" + p, to: "o:" + p, kind: "main" });
+    } while (j !== k.next);
+    c.previous = a; c.next = b; a.next = b.previous = b = c;
+    let aa = score(a);
+    while ((c = c.next) !== b) { const ca = score(c); if (ca < aa) { a = c; aa = ca; } }
+    b = a.next;
+  }
+  const chain = [b.c];
+  for (c = b; (c = c.next) !== b;) chain.push(c.c);
+  const e = enclose(chain);
+  for (const ci of circles) { ci.x -= e.x; ci.y -= e.y; }
+  return e.r;
+}
+
+function enclose(circles) {
+  const rnd = lcg(), list = circles.slice();
+  for (let m = list.length; m;) { const i = rnd() * m-- | 0; [list[m], list[i]] = [list[i], list[m]]; }
+  let B = [], e = null;
+  for (let i = 0; i < list.length;) {
+    if (e && enclosesWeak(e, list[i])) ++i;
+    else { B = extendBasis(B, list[i]); e = encloseBasis(B); i = 0; }
+  }
+  return e;
+}
+function extendBasis(B, p) {
+  if (enclosesWeakAll(p, B)) return [p];
+  for (const b of B) if (enclosesNot(p, b) && enclosesWeakAll(encloseBasis2(b, p), B)) return [b, p];
+  for (let i = 0; i < B.length - 1; ++i) for (let j = i + 1; j < B.length; ++j) {
+    if (enclosesNot(encloseBasis2(B[i], B[j]), p) && enclosesNot(encloseBasis2(B[i], p), B[j]) &&
+        enclosesNot(encloseBasis2(B[j], p), B[i]) && enclosesWeakAll(encloseBasis3(B[i], B[j], p), B)) return [B[i], B[j], p];
+  }
+  throw new Error("circle packing: no enclosing circle found");
+}
+function enclosesNot(a, b) { const dr = a.r - b.r, dx = b.x - a.x, dy = b.y - a.y; return dr < 0 || dr * dr < dx * dx + dy * dy; }
+function enclosesWeak(a, b) { const dr = a.r - b.r + Math.max(a.r, b.r, 1) * 1e-9, dx = b.x - a.x, dy = b.y - a.y; return dr > 0 && dr * dr > dx * dx + dy * dy; }
+function enclosesWeakAll(a, B) { return B.every(b => enclosesWeak(a, b)); }
+function encloseBasis(B) { return B.length === 1 ? { x: B[0].x, y: B[0].y, r: B[0].r } : B.length === 2 ? encloseBasis2(B[0], B[1]) : encloseBasis3(B[0], B[1], B[2]); }
+function encloseBasis2(a, b) {
+  const x21 = b.x - a.x, y21 = b.y - a.y, r21 = b.r - a.r, l = Math.sqrt(x21 * x21 + y21 * y21);
+  return { x: (a.x + b.x + x21 / l * r21) / 2, y: (a.y + b.y + y21 / l * r21) / 2, r: (l + a.r + b.r) / 2 };
+}
+function encloseBasis3(a, b, c) {
+  const x1 = a.x, y1 = a.y, r1 = a.r, a2 = x1 - b.x, a3 = x1 - c.x, b2 = y1 - b.y, b3 = y1 - c.y, c2 = b.r - r1, c3 = c.r - r1,
+    d1 = x1 * x1 + y1 * y1 - r1 * r1, d2 = d1 - b.x * b.x - b.y * b.y + b.r * b.r, d3 = d1 - c.x * c.x - c.y * c.y + c.r * c.r,
+    ab = a3 * b2 - a2 * b3, xa = (b2 * d3 - b3 * d2) / (ab * 2) - x1, xb = (b3 * c2 - b2 * c3) / ab,
+    ya = (a3 * d2 - a2 * d3) / (ab * 2) - y1, yb = (a2 * c3 - a3 * c2) / ab,
+    A = xb * xb + yb * yb - 1, Bq = 2 * (r1 + xa * xb + ya * yb), C = xa * xa + ya * ya - r1 * r1,
+    r = -(Math.abs(A) > 1e-6 ? (Bq + Math.sqrt(Bq * Bq - 4 * A * C)) / (2 * A) : C / Bq);
+  return { x: x1 + xa + xb * r, y: y1 + ya + yb * r, r };
+}
+
+// Packs a tree bottom-up: leaves keep their r, a parent becomes the circle around its packed children.
+function packTree(node, pad) {
+  if (!node.children || !node.children.length) return;
+  for (const ch of node.children) packTree(ch, pad);
+  const p = pad(node);
+  for (const ch of node.children) ch.r += p;
+  const r = packSiblings(node.children);
+  for (const ch of node.children) ch.r -= p;
+  node.r = r + p;
+}
+
+// ---------------------------------------------------------------- labels
+// A label is shown at a zoom level only if it fits in its circle and does not overlap a label already
+// placed at that level (bigger circles first). REF_W world units fill REF_W screen pixels at zoom 1,
+// so at zoom z one screen pixel is 1/z world units. The page uses the same numbers.
+export const REF_W = 1000;
+export const LEVELS = [0.4, 0.6, 1, 1.5, 2.25, 3.4, 5, 7.6, 11.4, 17];
+const FONT = { project: [9, 18], group: [9, 18], folder: [7.2, 14], leaf: [7.2, 14] }; // px per character, line height
+const fontOf = n => FONT[n.type] || FONT.leaf;
+const isContainer = n => n.type === "project" || n.type === "group" || n.type === "folder";
+
+// Containers put their label inside, near the top; a project too small for that puts it just above itself.
+export function labelBox(n, z) {
+  const [cw, h] = fontOf(n), s = 1 / z, w = n.label.length * cw * s, hh = h * s;
+  let cy = n.y, fits = w <= 1.9 * n.r && hh <= 1.2 * n.r;
+  if (isContainer(n)) {
+    const inside = w <= 1.5 * n.r && n.r >= 2 * hh;
+    fits = inside || n.type !== "folder";
+    cy = inside ? n.y - n.r + hh * 0.9 : n.y - n.r - hh * 0.6;
+  }
+  return { x0: n.x - w / 2, x1: n.x + w / 2, y0: cy - hh / 2, y1: cy + hh / 2, fits };
+}
+const overlap = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+
+function placeLabels(nodes) {
+  const rank = { project: 0, group: 0, folder: 1 };
+  const order = nodes.filter(n => n.label && !n.overlay).sort((a, b) =>
+    (rank[a.type] ?? 2) - (rank[b.type] ?? 2) || b.r - a.r || (a.id < b.id ? -1 : 1));
+  for (const n of order) n.lv = 0;
+  LEVELS.forEach((z, i) => {
+    const placed = [];
+    for (const n of order) {
+      const box = labelBox(n, z);
+      if (box.fits && !placed.some(p => overlap(p, box))) { placed.push(box); n.lv |= 1 << i; }
     }
   });
-  // project to project: how many agents of one project worked in another
-  for (const [k, set] of [...bridge.entries()].sort()) {
-    const [from, to] = k.split("\t");
-    links.push({ from: "p:" + from, to: "p:" + to, kind: "bridge", n: set.size });
+}
+
+// ---------------------------------------------------------------- building the graph
+const byCount = (x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1);
+const round = v => Math.round(v * 100) / 100;
+
+export function buildGraph(agents) {
+  const byId = new Map(agents.map(a => [a.id, a]));
+  // families: a chat and the subagents it started. A subagent whose chat is not in the logs stands alone.
+  const fams = new Map();
+  for (const a of agents) if (!a.sub || !byId.has(a.parentKey)) fams.set(a.id, { head: a, subs: [] });
+  for (const a of agents) if (a.sub && byId.has(a.parentKey)) fams.get(a.parentKey).subs.push(a);
+  const famList = [...fams.values()].map(f => {
+    const all = [f.head, ...f.subs], folders = new Map();
+    for (const a of all) for (const [k, n] of a.folders) folders.set(k, (folders.get(k) || 0) + n);
+    f.subs.sort((x, y) => ((x.first || "") < (y.first || "") ? -1 : (x.first || "") > (y.first || "") ? 1 : x.id < y.id ? -1 : 1));
+    return {
+      ...f, project: f.head.project || "other", folders,
+      fresh: all.reduce((s, a) => s + a.fresh, 0), cached: all.reduce((s, a) => s + a.cached, 0),
+      first: all.map(a => a.first).filter(Boolean).sort()[0] || null,
+    };
+  }).sort((a, b) => b.fresh - a.fresh || (a.head.id < b.head.id ? -1 : 1));
+
+  // where each family worked: its own project's folders, and folders in other projects
+  for (const f of famList) {
+    const all = [...f.folders.entries()].sort(byCount).map(([k, n]) => { const [pr, folder] = k.split("\t"); return { pr, folder, n }; });
+    f.mine = all.filter(o => o.pr === f.project);
+    f.cross = all.filter(o => o.pr !== f.project).slice(0, LIMITS.foldersPerAgent);
   }
-  links.sort((a, b) => (a.from + a.to + a.kind < b.from + b.to + b.kind ? -1 : 1));
-  // viewBox fits the nodes (plus room for labels), not the whole grid
-  const PAD = 70;
-  const minX = Math.min(...nodes.map(n => n.x - n.r)) - PAD, maxX = Math.max(...nodes.map(n => n.x + n.r)) + PAD;
-  const minY = Math.min(...nodes.map(n => n.y - n.r)) - PAD, maxY = Math.max(...nodes.map(n => n.y + n.r)) + PAD;
-  return { nodes, links, box: [minX, minY, maxX - minX, maxY - minY], limits: LIMITS };
+  const shownFams = famList.filter(f => f.fresh >= LIMITS.foldBelow);
+
+  // projects: where chats ran (by fresh tokens), then projects only reached into from elsewhere (by
+  // tool calls). The first LIMITS.projects are top-level circles; the tail sits in "smaller projects".
+  const total = new Map(), touched = new Map();
+  for (const f of famList) total.set(f.project, (total.get(f.project) || 0) + f.fresh);
+  for (const f of shownFams) for (const o of f.cross) if (!total.has(o.pr)) touched.set(o.pr, (touched.get(o.pr) || 0) + o.n);
+  const ranked = [...total.entries()].sort(byCount).map(e => e[0]).concat([...touched.entries()].sort(byCount).map(e => e[0]));
+  const top = new Set(ranked.slice(0, LIMITS.projects));
+  const tail = ranked.filter(p => !top.has(p));
+
+  // the tree
+  const tree = { id: "root", type: "root", children: [] };
+  const projNode = new Map();
+  const mkProject = (name, parent, type = "project") => {
+    const n = { id: (type === "group" ? "g:" : "p:") + name, type, label: name, children: [], folders: new Map() };
+    parent.children.push(n); projNode.set(name, n); return n;
+  };
+  for (const p of ranked.filter(p => top.has(p))) mkProject(p, tree);
+  if (tail.length) {
+    const g = { id: "g:smaller", type: "group", label: "smaller projects", children: [] };
+    tree.children.push(g);
+    for (const p of tail) mkProject(p, g);
+  }
+  const folderNode = (p, name) => {
+    const pn = projNode.get(p);
+    if (!pn.folders.has(name)) { const f = { id: `f:${p}:${name}`, type: "folder", label: name, children: [] }; pn.folders.set(name, f); pn.children.push(f); }
+    return pn.folders.get(name);
+  };
+
+  const maxFresh = Math.max(1, ...famList.map(f => f.fresh));
+  const floor = maxFresh / 100; // the smallest chat is a tenth as wide as the biggest, so it stays visible
+  const leafR = v => Math.sqrt(Math.max(v, floor));
+  const famOf = new Map();
+  const folded = new Map();
+  for (const f of famList) {
+    if (f.fresh < LIMITS.foldBelow) {
+      const k = f.project, x = folded.get(k) || { n: 0, fresh: 0, cached: 0 };
+      x.n++; x.fresh += f.fresh; x.cached += f.cached; folded.set(k, x); continue;
+    }
+    const where = f.mine.length ? f.mine[0].folder : f.head.cwdFolder;
+    const parent = where ? folderNode(f.project, where) : projNode.get(f.project);
+    const h = f.head, mods = [...h.models.entries()].sort(byCount);
+    const leaf = {
+      id: h.id, type: h.sub ? "subagent" : "chat", label: `${mods[0][0]} · ${fmt(f.fresh)}`, family: family(mods[0][0]),
+      r: leafR(f.fresh), first: f.first, subs: [], cross: [],
+      detail: `${h.sub ? "Subagent (its chat is not in these logs)" : "Chat"} in ${f.project}. Fresh tokens ${fmt(f.fresh)}, cached ${fmt(f.cached)}` +
+        (f.subs.length ? `, including ${f.subs.length} subagent${f.subs.length === 1 ? "" : "s"} (${fmt(f.subs.reduce((s, a) => s + a.fresh, 0))} fresh)` : "") + ". " +
+        `Models: ${mods.map(m => m[0]).join(", ")}. ` +
+        (f.mine.length ? `Folders: ${f.mine.slice(0, LIMITS.foldersPerAgent).map(o => o.folder + " (" + o.n + ")").join(", ")}. ` : "No file paths in its tool calls. ") +
+        (f.cross.length ? `Also worked in: ${[...new Set(f.cross.map(o => o.pr))].join(", ")}. ` : "") +
+        (f.first ? `Started ${f.first.replace("T", " ")} UTC.` : ""),
+    };
+    parent.children.push(leaf); famOf.set(leaf.id, f);
+  }
+  for (const [p, x] of folded) {
+    projNode.get(p).children.push({ id: "s:" + p, type: "small", label: `small chats (${x.n})`, r: leafR(x.fresh),
+      detail: `${x.n} chats under ${fmt(LIMITS.foldBelow)} fresh tokens each, folded together. Fresh ${fmt(x.fresh)}, cached ${fmt(x.cached)}.` });
+  }
+
+  // folders other projects' chats reached into: a plain circle when no chat of its own sits there
+  for (const f of shownFams) for (const o of f.cross) {
+    const pn = projNode.get(o.pr);
+    if (!pn.folders.has(o.folder)) { const x = { id: `f:${o.pr}:${o.folder}`, type: "folder", label: o.folder, children: [], touch: 0 }; pn.folders.set(o.folder, x); pn.children.push(x); }
+    const x = pn.folders.get(o.folder);
+    x.touch = (x.touch || 0) + o.n;
+  }
+  for (const pn of projNode.values()) for (const x of pn.folders.values()) if (!x.children.length) x.r = leafR(floor) * (1 + Math.log2(1 + x.touch) / 3);
+
+  // drop empty containers, sort children (biggest first) so packing is stable
+  const prune = n => {
+    if (!n.children) return true;
+    n.children = n.children.filter(prune);
+    n.children.sort((a, b) => weight(b) - weight(a) || (a.id < b.id ? -1 : 1));
+    return n.children.length > 0 || !!n.touch;
+  };
+  const weight = n => (n.children && n.children.length ? n.children.reduce((s, c) => s + weight(c), 0) : n.r * n.r);
+  prune(tree);
+  if (!tree.children.length) return { nodes: [], bridges: [], box: [0, 0, REF_W, REF_W], days: [], limits: LIMITS, levels: LEVELS, refW: REF_W };
+
+  const maxLeaf = leafR(maxFresh);
+  packTree(tree, n => maxLeaf * (n.type === "root" ? 0.5 : n.type === "group" ? 0.3 : n.type === "project" ? 0.22 : 0.1));
+
+  // absolute positions, scaled so the whole picture is REF_W across
+  const k = REF_W / 2 / tree.r, nodes = [];
+  const walkOut = (n, ox, oy, parentId, top) => {
+    const x = ox + n.x * k, y = oy + n.y * k;
+    if (n.type !== "root") {
+      const out = { id: n.id, type: n.type, label: n.label, x: round(x), y: round(y), r: round(n.r * k), parent: parentId, top };
+      for (const key of ["family", "detail", "first", "subs", "cross"]) if (n[key] !== undefined) out[key] = n[key];
+      if (n.type === "project") out.detail = `Project. ${countLeaves(n)} chats shown.`;
+      if (n.type === "group") out.detail = `${n.children.length} smaller projects grouped together.`;
+      if (n.type === "folder") out.detail = n.label === "scratch" ? "Temporary files, outside your projects." :
+        (n.children.length ? "A folder inside the project." : "No chat ran here.") + (n.touch ? ` Chats from other projects used it ${n.touch} times.` : "");
+      nodes.push(out);
+    }
+    const t = n.type === "root" ? null : top || n.id;
+    for (const ch of n.children || []) walkOut(ch, x, y, n.type === "root" ? null : n.id, t);
+  };
+  const countLeaves = n => (n.children ? n.children.reduce((s, c) => s + countLeaves(c), 0) : n.type === "chat" || n.type === "subagent" ? 1 : 0);
+  tree.x = 0; tree.y = 0;
+  walkOut(tree, REF_W / 2, REF_W / 2, null, null);
+  const byNode = new Map(nodes.map(n => [n.id, n]));
+
+  // subagents: hidden circles in a ring around their chat, shown when the chat is clicked
+  for (const n of nodes) {
+    const f = famOf.get(n.id);
+    if (!f || !f.subs.length) continue;
+    const rs = f.subs.map(a => Math.max(1.2, Math.min(n.r * 0.7, leafR(a.fresh) * k)));
+    const maxR = Math.max(...rs), ring = Math.max(n.r + maxR * 1.6, rs.reduce((s, r) => s + 2 * r + 2, 0) / (2 * Math.PI));
+    f.subs.forEach((a, i) => {
+      const th = -Math.PI / 2 + (2 * Math.PI * i) / f.subs.length, mods = [...a.models.entries()].sort(byCount);
+      const id = a.id;
+      n.subs.push(id);
+      nodes.push({ id, type: "subagent", overlay: true, parent: n.id, label: `${mods[0][0]} · ${fmt(a.fresh)}`, family: family(mods[0][0]),
+        x: round(n.x + ring * Math.cos(th)), y: round(n.y + ring * Math.sin(th)), r: round(rs[i]), first: a.first,
+        detail: `Subagent, started by the chat "${n.label}"${a.first ? " at " + a.first.replace("T", " ") + " UTC" : ""}. Fresh tokens ${fmt(a.fresh)}, cached ${fmt(a.cached)}. Models: ${mods.map(m => m[0]).join(", ")}.` });
+    });
+  }
+
+  // work in other projects: an edge from the chat to that project's folder (or the project), and
+  // one bridge per pair of top-level circles, counting the chats that crossed
+  const bridge = new Map();
+  for (const n of nodes) {
+    const f = famOf.get(n.id);
+    if (!f || !f.cross) continue;
+    for (const o of f.cross) {
+      const target = byNode.get(`f:${o.pr}:${o.folder}`) || byNode.get("p:" + o.pr);
+      if (!target || n.cross.includes(target.id)) continue;
+      n.cross.push(target.id);
+      const a = n.top, b = target.top || target.id;
+      if (a && b && a !== b) { const key = a + "\t" + b; bridge.set(key, (bridge.get(key) || new Set()).add(n.id)); }
+    }
+  }
+  const bridges = [...bridge.entries()].sort().map(([key, set]) => { const [from, to] = key.split("\t"); return { from, to, n: set.size }; });
+
+  placeLabels(nodes);
+  for (const n of nodes) { if (!n.subs || !n.subs.length) delete n.subs; if (!n.cross || !n.cross.length) delete n.cross; }
+  const days = [...new Set(nodes.filter(n => n.first).map(n => n.first.slice(0, 10)))].sort();
+  const PAD = 20;
+  return { nodes, bridges, days, box: [-PAD, -PAD, REF_W + 2 * PAD, REF_W + 2 * PAD], limits: LIMITS, levels: LEVELS, refW: REF_W,
+    folded: [...folded.values()].reduce((s, x) => s + x.n, 0) };
 }
 
 export function fmt(n) {
@@ -288,9 +516,10 @@ async function main() {
 
   const { agents, problems, files, lines } = await readLogs(logs, { days, home });
   const graph = buildGraph(agents);
-  const count = t => graph.nodes.filter(n => n.type === t).length;
+  const count = (t, o = false) => graph.nodes.filter(n => n.type === t && !!n.overlay === o).length;
   console.log(`Tongs agent graph: ${files} log files, ${lines} lines, ${agents.length} agents with tokens`);
-  console.log(`Shown: ${count("project")} projects, ${count("folder")} folders, ${count("chat")} chats, ${count("subagent")} subagents, ${count("other")} folded groups`);
+  console.log(`Shown: ${count("project")} projects, ${count("folder")} folders, ${count("chat")} chats, ${count("subagent", true)} subagents (open a chat to see them), ` +
+    `${count("subagent")} subagents without their chat, ${graph.folded} small chats folded`);
   for (const p of problems.slice(0, 10)) console.warn("agent-graph: skipped bad line " + p);
   if (problems.length > 10) console.warn(`agent-graph: ...and ${problems.length - 10} more bad lines`);
   if (args.includes("--dry-run")) { console.log("Dry run: nothing written."); return; }

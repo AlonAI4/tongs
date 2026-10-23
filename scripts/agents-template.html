@@ -11,6 +11,7 @@
 /* Colours and fonts follow the Tongs map page (map-template.html). */
 :root{
   color-scheme:light; --ground:#E4E4E0; --surface:#F2F2EF; --line:#CBCAC3; --ink:#191512; --ink-2:#4A423A; --ink-dim:#655C52; --edge:#848377;
+  --well-1:rgba(25,21,18,.045); --well-2:rgba(25,21,18,.06);
   --m-opus:#C0430A; --m-sonnet:hsl(205 55% 36%); --m-haiku:hsl(140 45% 30%); --m-fable:hsl(268 38% 46%); --m-other:#655C52;
   --f-display:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
   --f-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
@@ -19,6 +20,7 @@
 @media (prefers-color-scheme: dark){
   :root{
     color-scheme:dark; --ground:#0D0B0A; --surface:#151210; --line:#2E2721; --ink:#F2EBE0; --ink-2:#C3B7A8; --ink-dim:#A2968A; --edge:#7A6656;
+    --well-1:rgba(255,235,210,.035); --well-2:rgba(255,235,210,.05);
     --m-opus:#FF6A1F; --m-sonnet:hsl(205 60% 66%); --m-haiku:hsl(140 40% 56%); --m-fable:hsl(268 60% 76%); --m-other:#A2968A;
   }
 }
@@ -26,55 +28,70 @@
 html,body{height:100%}
 body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--f-body);font-size:.9375rem;line-height:1.5;overflow:hidden}
 :focus-visible{outline:2px solid var(--m-opus);outline-offset:2px}
-.app{display:grid;grid-template-columns:272px minmax(0,1fr);height:100vh;height:100dvh}
+.app{display:grid;grid-template-columns:280px minmax(0,1fr);height:100vh;height:100dvh}
 .rail{background:var(--surface);border-right:1px solid var(--line);padding:18px 16px;overflow:auto}
 h1{font:700 1.7rem/1 var(--f-display);letter-spacing:.02em;text-transform:uppercase;margin:0 0 4px}
-.sub{color:var(--ink-dim);font-size:.8rem;margin:0 0 16px}
+.sub{color:var(--ink-dim);font-size:.8rem;margin:0 0 14px}
 h2{font:400 .7rem var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-dim);margin:18px 0 6px}
 .key{display:flex;align-items:center;gap:8px;font-size:.85rem;margin:3px 0}
 .key svg{width:16px;height:16px;flex:none}
-#detail{font-size:.85rem;color:var(--ink-2);min-height:5em;overflow-wrap:anywhere}
+#detail{font-size:.85rem;color:var(--ink-2);min-height:4.5em;overflow-wrap:anywhere}
 #detail b{display:block;color:var(--ink);font-size:.95rem;margin-bottom:4px}
+.time label{display:grid;grid-template-columns:3.2em 1fr;align-items:center;gap:6px;font-size:.8rem;color:var(--ink-2)}
+.time input{width:100%;accent-color:var(--m-opus)}
+.time output{display:block;font:400 .78rem var(--f-mono);color:var(--ink);margin:2px 0 8px 3.6em}
 .stage{position:relative;min-width:0}
-svg#g{width:100%;height:100%;display:block}
-.link{stroke:var(--edge);stroke-width:1;opacity:.45}
-.link.parent{stroke-dasharray:4 3;opacity:.7}
-.link.more,.link.cross{opacity:0}
-.bridge{fill:none;stroke:var(--ink-dim);opacity:.55}
-.blbl{font:500 13px var(--f-mono);fill:var(--ink-2);text-anchor:middle;paint-order:stroke;stroke:var(--ground);stroke-width:4px}
-.dim{opacity:.12!important}
-.link.more.dim,.link.cross.dim{opacity:0!important}
-.on.link{opacity:1!important;stroke-width:1.6}
+svg#g{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+circle,path,line{vector-effect:non-scaling-stroke}
+.c-project{fill:var(--well-1);stroke:var(--ink-2);stroke-width:1.6}
+.c-group{fill:var(--well-1);stroke:var(--ink-dim);stroke-width:1.2;stroke-dasharray:6 4}
+.c-folder{fill:var(--well-2);stroke:var(--line);stroke-width:1}
+.c-small{fill:none;stroke:var(--ink-dim);stroke-width:1.2;stroke-dasharray:3 3}
+.c-chat{stroke:var(--ground);stroke-width:1}
+.c-sub{fill-opacity:.3;stroke-width:1.6}
 .node{cursor:pointer}
-.node:focus-visible{outline:none}
-.node:focus-visible .shape,.node.sel .shape{stroke:var(--ink);stroke-width:2.5}
-.lbl{font:500 14px var(--f-mono);fill:var(--ink-2);pointer-events:none;paint-order:stroke;stroke:var(--ground);stroke-width:3px}
-.lbl.proj{font:700 24px var(--f-display);fill:var(--ink);letter-spacing:.04em;text-transform:uppercase}
-.lbl.agent{display:none}
-.node:hover .lbl.agent,.node.sel .lbl.agent{display:block}
-@media (max-width:760px){.app{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}.rail{border-right:0;border-bottom:1px solid var(--line);max-height:40vh}}
+.node:focus-visible .shape,.node.sel .shape{stroke:var(--ink);stroke-width:2.6}
+.badge{fill:var(--ink);pointer-events:none}
+.btxt{fill:var(--ground);font-family:var(--f-mono);font-weight:500;text-anchor:middle;dominant-baseline:central;pointer-events:none}
+.bridge{fill:none;stroke:var(--ink-dim);opacity:.5}
+.blbl{font-family:var(--f-mono);fill:var(--ink-2);text-anchor:middle;dominant-baseline:central;paint-order:stroke;stroke:var(--ground);pointer-events:none}
+.cross{stroke:var(--ink);stroke-dasharray:4 3;opacity:.85}
+.parentln{stroke:var(--ink-2);stroke-dasharray:3 3;opacity:.7}
+.lbl{font-family:var(--f-mono);font-weight:500;fill:var(--ink-2);text-anchor:middle;dominant-baseline:central;pointer-events:none}
+.lbl.proj{font-family:var(--f-display);font-weight:700;fill:var(--ink);letter-spacing:.04em;text-transform:uppercase}
+.lbl.leaf{fill:var(--ground)}
+.lbl.force{fill:var(--ink);paint-order:stroke;stroke:var(--ground)}
+.off{display:none}
+.dim{opacity:.18}
+@media (max-width:760px){.app{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}.rail{border-right:0;border-bottom:1px solid var(--line);max-height:42vh}}
 </style>
 </head>
 <body>
 <div class="app">
   <aside class="rail">
     <h1>Agent graph</h1>
-    <p class="sub">Projects, the folders agents worked in, and the agents. Size is fresh tokens. Hover or click an agent for its other folders and the projects it reached into. Scroll to zoom, drag to move, double-click to reset.</p>
+    <p class="sub">Each project is a circle holding its folders, and each folder holds the chats that worked there. Size is fresh tokens. Click a chat with a number to open its subagents. Scroll to zoom, drag to move, double-click to reset.</p>
     <h2>Circles</h2>
-    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="var(--surface)" stroke="currentColor" stroke-width="2.5"/></svg>project (large ring)</div>
-    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4" fill="var(--ground)" stroke="currentColor" stroke-width="1.5"/></svg>folder (small ring)</div>
-    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="currentColor"/></svg>chat (solid)</div>
-    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="currentColor" fill-opacity=".3" stroke="currentColor" stroke-width="1.5"/></svg>subagent (soft, dashed line to its chat)</div>
-    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2 2"/></svg>smaller agents folded together</div>
-    <div class="key"><svg viewBox="0 0 16 16"><path d="M1 12Q8 2 15 12" fill="none" stroke="currentColor" stroke-width="2"/></svg>agents of one project worked in another (number = agents)</div>
+    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>project</div>
+    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="currentColor" fill-opacity=".12" stroke="currentColor" stroke-opacity=".4"/></svg>folder</div>
+    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="currentColor"/></svg>chat</div>
+    <div class="key"><svg viewBox="0 0 16 16"><circle cx="7" cy="9" r="5" fill="currentColor"/><circle cx="12" cy="4" r="3.5" fill="currentColor"/></svg>chat with subagents (number)</div>
+    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="currentColor" fill-opacity=".3" stroke="currentColor" stroke-width="1.5"/></svg>subagent</div>
+    <div class="key"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 2"/></svg>small chats folded together</div>
+    <div class="key"><svg viewBox="0 0 16 16"><path d="M1 12Q8 2 15 12" fill="none" stroke="currentColor" stroke-width="2"/></svg>chats of one project working in another</div>
     <h2>Colour is the model</h2>
     <div id="models"></div>
+    <h2>Time</h2>
+    <div class="time">
+      <label>From <input type="range" id="from" min="0" value="0" step="1" aria-describedby="fromv"></label><output id="fromv"></output>
+      <label>To <input type="range" id="to" min="0" value="0" step="1" aria-describedby="tov"></label><output id="tov"></output>
+    </div>
     <h2>Details</h2>
-    <div id="detail">Click a node.</div>
+    <div id="detail" aria-live="polite">Click a circle.</div>
     <h2>What is shown</h2>
     <p class="sub" id="caps"></p>
   </aside>
-  <main class="stage"><svg id="g" role="img" aria-label="Agent graph: projects, folders and agents"></svg></main>
+  <main class="stage"><svg id="g" role="img" aria-label="Agent graph: projects, folders and chats as nested circles" preserveAspectRatio="xMidYMid meet"></svg></main>
 </div>
 <script type="application/json" id="graph-data">/*__DATA__*/</script>
 <script>
@@ -83,92 +100,152 @@ svg#g{width:100%;height:100%;display:block}
   const NS = "http://www.w3.org/2000/svg";
   const svg = document.getElementById("g");
   const el = (n, a, p) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e; };
-  const text = (e, t) => { e.textContent = t; return e; };
   const MODELS = ["opus","sonnet","haiku","fable","other"];
   const colour = f => "var(--m-" + (MODELS.includes(f) ? f : "other") + ")";
-  let vb = G.box.slice();
-  const apply = () => svg.setAttribute("viewBox", vb.join(" "));
-  apply();
-  // Wheel zooms toward the pointer, drag pans, double-click resets.
-  svg.addEventListener("wheel", ev => {
-    ev.preventDefault();
-    const r = svg.getBoundingClientRect(), k = ev.deltaY < 0 ? 0.85 : 1 / 0.85;
-    const fx = (ev.clientX - r.left) / r.width, fy = (ev.clientY - r.top) / r.height;
-    const w = Math.min(G.box[2] * 2, Math.max(G.box[2] / 12, vb[2] * k)), h = w * (vb[3] / vb[2]);
-    vb = [vb[0] + (vb[2] - w) * fx, vb[1] + (vb[3] - h) * fy, w, h]; apply();
-  }, {passive:false});
-  let drag = null;
-  svg.addEventListener("pointerdown", ev => { if (ev.target === svg) { drag = {x:ev.clientX, y:ev.clientY, vb:vb.slice()}; svg.setPointerCapture(ev.pointerId); } });
-  svg.addEventListener("pointermove", ev => { if (!drag) return; const r = svg.getBoundingClientRect();
-    vb = [drag.vb[0] - (ev.clientX - drag.x) * vb[2] / r.width, drag.vb[1] - (ev.clientY - drag.y) * vb[3] / r.height, vb[2], vb[3]]; apply(); });
-  svg.addEventListener("pointerup", () => { drag = null; });
-  svg.addEventListener("dblclick", () => { vb = G.box.slice(); apply(); });
+  const byId = new Map(G.nodes.map(n => [n.id, n]));
+  const isLeaf = n => n.type === "chat" || n.type === "subagent";
 
-  document.getElementById("caps").textContent = "The biggest " + G.limits.agentsPerProject + " agents per project, " + G.limits.agentsTotal + " in total, ranked by fresh tokens. The rest are folded into one dashed node per project. Up to " + G.limits.foldersPerAgent + " folders per agent.";
+  // ---------- legend
   const km = document.getElementById("models");
   MODELS.forEach(m => { const d = document.createElement("div"); d.className = "key";
     const s = el("svg", {viewBox:"0 0 16 16"}); el("circle", {cx:8, cy:8, r:5, fill:colour(m)}, s); d.appendChild(s); d.appendChild(document.createTextNode(m)); km.appendChild(d); });
+  document.getElementById("caps").textContent = "Every chat with at least " + G.limits.foldBelow + " fresh tokens. " + G.folded +
+    " smaller chats are folded into one dashed circle per project. The " + G.limits.projects + " busiest projects are top-level circles; the rest sit in \"smaller projects\". Up to " +
+    G.limits.foldersPerAgent + " folders per chat.";
 
-  const pos = new Map(G.nodes.map(n => [n.id, n]));
-  const linkEls = [];
-  const gl = el("g", {}, svg), gn = el("g", {}, svg);
-  const maxBridge = Math.max(1, ...G.links.filter(l => l.kind === "bridge").map(l => l.n));
-  G.links.forEach(l => { const a = pos.get(l.from), b = pos.get(l.to); if (!a || !b) return;
-    if (l.kind === "bridge") {
-      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y, bow = 0.18;
-      const cx = mx - dy * bow, cy = my + dx * bow;
-      const e = el("path", {d:`M${a.x} ${a.y}Q${cx} ${cy} ${b.x} ${b.y}`, class:"link bridge", "stroke-width":1.5 + 5 * Math.sqrt(l.n / maxBridge)}, gl);
-      linkEls.push({e, l});
-      text(el("text", {x:(a.x + 2 * cx + b.x) / 4, y:(a.y + 2 * cy + b.y) / 4, class:"blbl"}, gl), String(l.n));
-      return;
+  // ---------- layers
+  const gWells = el("g", {}, svg), gBridges = el("g", {}, svg), gLeaves = el("g", {}, svg), gLines = el("g", {}, svg), gSubs = el("g", {}, svg), gLabels = el("g", {}, svg);
+  const view = new Map(); // id -> {n, g, label, badge}
+
+  // bridges: an arc from the edge of one top-level circle to the edge of the other
+  const maxBridge = Math.max(1, ...G.bridges.map(b => b.n));
+  const bridgeEls = G.bridges.map(b => {
+    const a = byId.get(b.from), c = byId.get(b.to); if (!a || !c) return null;
+    const dx = c.x - a.x, dy = c.y - a.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+    const x1 = a.x + ux * a.r, y1 = a.y + uy * a.r, x2 = c.x - ux * c.r, y2 = c.y - uy * c.r;
+    const mx = (x1 + x2) / 2 - uy * d * 0.15, my = (y1 + y2) / 2 + ux * d * 0.15;
+    const path = el("path", {d:`M${x1} ${y1}Q${mx} ${my} ${x2} ${y2}`, class:"bridge", "stroke-width":1 + 4 * Math.sqrt(b.n / maxBridge)}, gBridges);
+    const t = el("text", {x:(x1 + 2 * mx + x2) / 4, y:(y1 + 2 * my + y2) / 4, class:"blbl"}, gBridges); t.textContent = String(b.n);
+    return {b, path, t};
+  }).filter(Boolean);
+
+  // every node is a circle; fill and ring tell the types apart
+  function draw(n) {
+    const layer = n.overlay ? gSubs : isLeaf(n) || n.type === "small" ? gLeaves : gWells;
+    const g = el("g", {class:"node" + (n.overlay ? " off" : ""), tabindex:"0", role:"button", "aria-label":n.type + ": " + n.label}, layer);
+    const cls = {project:"c-project", group:"c-group", folder:"c-folder", small:"c-small", chat:"c-chat", subagent:"c-chat c-sub"}[n.type];
+    const a = {class:"shape " + cls, cx:n.x, cy:n.y, r:n.r};
+    if (isLeaf(n)) { a.fill = colour(n.family); if (n.type === "subagent") a.stroke = colour(n.family); }
+    el("circle", a, g);
+    let badge = null;
+    if (n.subs) {
+      const br = Math.max(n.r * 0.32, 0.6), bx = n.x + n.r * 0.72, by = n.y - n.r * 0.72;
+      badge = { c: el("circle", {class:"badge", cx:bx, cy:by, r:br}, g), t: el("text", {class:"btxt", x:bx, y:by}, g), br };
+      badge.t.textContent = String(n.subs.length);
     }
-    const e = el("line", {x1:a.x, y1:a.y, x2:b.x, y2:b.y, class:"link " + l.kind}, gl); linkEls.push({e, l}); });
-
-  const nodeEls = new Map();
-  let selected = null;
-  // Every node is a circle; ring, fill and weight tell the types apart.
-  function shape(n, parent) {
-    const agent = n.type === "chat" || n.type === "subagent";
-    const a = {class:"shape", cx:n.x, cy:n.y, r:n.r, fill:"var(--surface)", stroke:"var(--ink-2)", "stroke-width":1.5};
-    if (n.type === "project") Object.assign(a, {stroke:"var(--ink)", "stroke-width":3});
-    if (n.type === "folder") Object.assign(a, {fill:"var(--ground)"});
-    if (n.type === "chat") Object.assign(a, {fill:colour(n.family), stroke:"var(--ground)"});
-    if (n.type === "subagent") Object.assign(a, {fill:colour(n.family), "fill-opacity":0.3, stroke:colour(n.family), "stroke-width":2});
-    if (n.type === "other") Object.assign(a, {fill:"none", "stroke-dasharray":"3 3"});
-    return el("circle", a, parent);
-  }
-  G.nodes.forEach(n => {
-    const g = el("g", {class:"node", tabindex:"0", role:"button", "aria-label":n.type + ": " + n.label}, gn);
-    shape(n, g);
-    const isAgent = n.type === "chat" || n.type === "subagent";
-    const cls = n.type === "project" ? "lbl proj" : isAgent ? "lbl agent" : "lbl";
-    text(el("text", {x:n.x, y:n.y + (n.type === "project" ? -n.r - 6 : n.r + 13), "text-anchor":"middle", class:cls}, g), n.label);
-    g.addEventListener("mouseenter", () => focus(n.id)); g.addEventListener("mouseleave", () => focus(selected));
-    g.addEventListener("focus", () => focus(n.id)); g.addEventListener("blur", () => focus(selected));
-    g.addEventListener("click", () => select(n.id));
+    const label = el("text", {class:"lbl" + (n.type === "project" || n.type === "group" ? " proj" : "") + (isLeaf(n) && !n.overlay ? " leaf" : "")}, gLabels);
+    label.textContent = n.label;
+    g.addEventListener("mouseenter", () => hover(n.id)); g.addEventListener("mouseleave", () => hover(null));
+    g.addEventListener("focus", () => hover(n.id)); g.addEventListener("blur", () => hover(null));
+    g.addEventListener("click", ev => { ev.stopPropagation(); if (!moved) select(n.id); });
     g.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(n.id); } });
-    nodeEls.set(n.id, g);
-  });
+    view.set(n.id, {n, g, label, badge});
+  }
+  G.nodes.forEach(draw);
 
-  function focus(id) {
-    const near = new Set(id ? [id] : []);
-    linkEls.forEach(({e, l}) => {
-      const hit = id && (l.from === id || l.to === id);
-      if (hit) { near.add(l.from); near.add(l.to); }
-      e.classList.toggle("on", !!hit); e.classList.toggle("dim", !!id && !hit);
+  // ---------- zoom: wheel zooms toward the pointer, drag pans, double-click resets
+  let vb = G.box.slice(), z = 1, hovered = null, selected = null, opened = null;
+  const FONT = {project:[9,18], group:[9,18], folder:[7.2,14], leaf:[7.2,14]};
+  const isContainer = n => n.type === "project" || n.type === "group" || n.type === "folder";
+  function zoom() { const r = svg.getBoundingClientRect(); return Math.min(r.width / vb[2], r.height / vb[3]) || 1; }
+  function level() { let i = -1; G.levels.forEach((l, j) => { if (l <= z) i = j; }); return i; }
+  function apply() {
+    svg.setAttribute("viewBox", vb.join(" "));
+    z = zoom(); const s = 1 / z, lv = level();
+    view.forEach(({n, label, badge}) => {
+      const h = (FONT[n.type] || FONT.leaf)[1], hh = h * s;
+      const forced = n.id === hovered || n.id === selected;
+      const planned = lv >= 0 && !n.overlay && ((n.lv || 0) >> lv) & 1;
+      label.classList.toggle("off", !(forced || planned) || hiddenByTime(n) || (n.overlay && n.parent !== opened));
+      label.classList.toggle("force", forced && !planned);
+      label.setAttribute("x", n.x);
+      // same placement as labelBox() in agent-graph.mjs
+      const inside = n.label.length * (FONT[n.type] || FONT.leaf)[0] * s <= 1.5 * n.r && n.r >= 2 * hh;
+      label.setAttribute("y", isContainer(n) ? (inside ? n.y - n.r + hh * 0.9 : n.y - n.r - hh * 0.6) : forced && !planned ? n.y - n.r - hh * 0.7 : n.y);
+      label.setAttribute("font-size", (h * 0.78 * s).toFixed(4));
+      label.setAttribute("stroke-width", (3 * s).toFixed(4));
+      if (badge) badge.t.setAttribute("font-size", (badge.br * 1.1).toFixed(4));
     });
-    nodeEls.forEach((g, nid) => g.classList.toggle("dim", !!id && !near.has(nid)));
+    bridgeEls.forEach(({t}) => { t.setAttribute("font-size", (11 * s).toFixed(4)); t.setAttribute("stroke-width", (3 * s).toFixed(4)); });
+  }
+  svg.addEventListener("wheel", ev => {
+    ev.preventDefault();
+    const r = svg.getBoundingClientRect(), k = ev.deltaY < 0 ? 0.85 : 1 / 0.85;
+    const w = Math.min(G.box[2] * 1.5, Math.max(G.box[2] / 400, vb[2] * k)), h = w * (vb[3] / vb[2]);
+    const fx = (ev.clientX - r.left) / r.width, fy = (ev.clientY - r.top) / r.height;
+    vb = [vb[0] + (vb[2] - w) * fx, vb[1] + (vb[3] - h) * fy, w, h]; apply();
+  }, {passive:false});
+  let drag = null, moved = false;
+  svg.addEventListener("pointerdown", ev => { if (ev.button === 0) { drag = {x:ev.clientX, y:ev.clientY, vb:vb.slice()}; moved = false; } });
+  svg.addEventListener("pointermove", ev => { if (!drag) return; const r = svg.getBoundingClientRect(), dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+    if (!moved && Math.abs(dx) + Math.abs(dy) > 4) moved = true;
+    if (moved) { const k = Math.max(vb[2] / r.width, vb[3] / r.height); vb = [drag.vb[0] - dx * k, drag.vb[1] - dy * k, vb[2], vb[3]]; apply(); } });
+  window.addEventListener("pointerup", () => { drag = null; });
+  svg.addEventListener("click", () => { if (!moved) select(null); });
+  svg.addEventListener("dblclick", () => { vb = G.box.slice(); apply(); });
+  new ResizeObserver(() => apply()).observe(svg); // also catches the first real layout, not just window resizes
+
+  // ---------- time filter
+  const from = document.getElementById("from"), to = document.getElementById("to");
+  const days = G.days.length ? G.days : [""];
+  from.max = to.max = String(days.length - 1); to.value = String(days.length - 1);
+  function hiddenByTime(n) {
+    if (!n.first) return false;
+    const d = n.first.slice(0, 10);
+    return d < days[+from.value] || d > days[+to.value];
+  }
+  function refresh() {
+    view.forEach(({n, g}) => { if (!n.overlay) g.classList.toggle("dim", hiddenByTime(n) || (!!opened && isLeaf(n) && n.id !== opened)); else g.classList.toggle("dim", hiddenByTime(n)); });
+    apply();
+  }
+  function filter(ev) {
+    if (+from.value > +to.value) { if (ev && ev.target === from) to.value = from.value; else from.value = to.value; }
+    document.getElementById("fromv").textContent = days[+from.value];
+    document.getElementById("tov").textContent = days[+to.value];
+    refresh();
+  }
+  from.addEventListener("input", filter); to.addEventListener("input", filter);
+
+  // ---------- hover, open and select
+  function lines(id) {
+    gLines.textContent = "";
+    const n = byId.get(id);
+    bridgeEls.forEach(({b, path}) => path.classList.toggle("dim", !!n && (n.type === "project" || n.type === "group") && b.from !== id && b.to !== id));
+    if (!n) return;
+    (n.cross || []).forEach(t => { const m = byId.get(t); if (m) el("line", {x1:n.x, y1:n.y, x2:m.x, y2:m.y, class:"cross"}, gLines); });
+    if (n.overlay) { const p = byId.get(n.parent); el("line", {x1:p.x, y1:p.y, x2:n.x, y2:n.y, class:"parentln"}, gLines); }
+  }
+  function hover(id) { hovered = id; lines(id || selected); apply(); }
+  function openSubs(id) {
+    if (opened) byId.get(opened).subs.forEach(s => view.get(s).g.classList.add("off"));
+    opened = opened === id ? null : id;
+    if (opened) byId.get(opened).subs.forEach(s => view.get(s).g.classList.remove("off"));
   }
   function select(id) {
+    const n0 = id && byId.get(id);
+    if (n0 && n0.subs) openSubs(id);
+    else if (!id && opened) openSubs(opened);
+    else if (n0 && !n0.overlay && opened) openSubs(opened);
     selected = selected === id ? null : id;
-    nodeEls.forEach((g, nid) => g.classList.toggle("sel", nid === selected));
+    view.forEach(({g}, nid) => g.classList.toggle("sel", nid === selected));
     const d = document.getElementById("detail"); d.textContent = "";
-    const n = pos.get(selected);
-    if (!n) { d.textContent = "Click a node."; focus(null); return; }
-    const b = document.createElement("b"); b.textContent = n.label; d.appendChild(b);
-    d.appendChild(document.createTextNode(n.detail || n.type));
-    focus(selected);
+    const n = byId.get(selected);
+    if (n) { const b = document.createElement("b"); b.textContent = n.label; d.appendChild(b); d.appendChild(document.createTextNode(n.detail || n.type)); }
+    else d.textContent = "Click a circle.";
+    lines(selected); refresh();
   }
+
+  filter();
 })();
 </script>
 </body>
