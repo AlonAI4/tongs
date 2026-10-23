@@ -107,21 +107,31 @@ function celebrate($: EngineInterface, before?: number, after?: number) {
 // Stage of work -> the setting it suits. First match wins, so "stuck" beats "build".
 // Edit the words freely: each is a regex matched against the latest user message.
 const STAGES = [
-  { key: 'stuck', words: /\b(stuck|still (failing|broken)|hardest bug|tried (it )?twice)\b/i, family: 'fable', model: 'claude-fable-5-1', label: 'fable 5.1', effort: 'high' },
-  { key: 'brainstorm', words: /\b(brainstorm\w*|ideas?|name ideas|names for|plan the idea)\b/i, family: 'haiku', model: 'claude-haiku-5-5', label: 'haiku 5.5', effort: 'medium' },
-  { key: 'test', words: /\b(forge|tests?|testing|check|review|run the tests)\b/i, family: 'sonnet', model: 'claude-sonnet-5-5', label: 'sonnet 5.5', effort: 'medium' },
-  { key: 'build', words: /\b(build|implement|architecture|refactor)\b/i, family: 'opus', model: 'claude-opus-5-5', label: 'opus 5.5', effort: 'medium' },
+  { key: 'stuck', words: /\b(i'?m stuck|i am stuck|stuck on|still (failing|broken)|hardest bug|tried (it )?twice)\b/i, family: 'fable', model: 'claude-fable-5-1', label: 'fable 5.1', effort: 'high' },
+  { key: 'brainstorm', words: /\b(brainstorm\w*|name ideas|names for|ideas for|give me ideas|plan the idea)\b/i, family: 'haiku', model: 'claude-haiku-5-5', label: 'haiku 5.5', effort: 'medium' },
+  { key: 'test', words: /\b(use forge|run the tests|test (it|this|that|everything)|write (the )?tests|review (it|this|the (diff|code|changes)))\b/i, family: 'sonnet', model: 'claude-sonnet-5-5', label: 'sonnet 5.5', effort: 'medium' },
+  { key: 'build', words: /\b(build (a|an|the|me|it|this)|implement|architecture|refactor)\b/i, family: 'opus', model: 'claude-opus-5-5', label: 'opus 5.5', effort: 'medium' },
 ] as const
 type Stage = (typeof STAGES)[number]
-export const stageOf = (text: string): Stage | undefined => STAGES.find(s => s.words.test(text))
-let stage: Stage | undefined // the stage the latest message suggests
-let switchDone = false // pressed or dismissed: hidden until the stage changes
+// Only the start of a message counts, so a pasted log full of "test" and "build" suggests nothing.
+export const stageOf = (text: string): Stage | undefined => STAGES.find(s => s.words.test(text.slice(0, 300)))
+let stage: Stage | undefined // the stage the latest message suggests; a message with none clears it
+let switchDone = false // pressed or dismissed: hidden while the messages stay in that stage
+const FAMILIES = ['haiku', 'sonnet', 'opus', 'fable']
 
 async function switchTo($: EngineInterface, s: Stage) {
   switchDone = true
   $.ui.invalidate('ui.render')
-  try { await $.command.run({ command: 'model', args: s.model }) } catch (e) {
-    $.ui.toast(`Could not switch: ${e instanceof Error ? e.message : String(e)}. Type /model ${s.model}`)
+  let now = ''
+  try {
+    await $.command.run({ command: 'model', args: s.model })
+    now = (await $.session.model()).toLowerCase()
+  } catch {}
+  // /model answers with text rather than failing, so check the model really changed
+  if (!now.includes(s.family)) {
+    switchDone = false
+    $.ui.invalidate('ui.render')
+    $.ui.toast(`Could not switch to ${s.label}. Type /model ${s.model}`)
     return
   }
   let effortSet = false
@@ -189,7 +199,8 @@ export const register: Register = on => {
     done = undefined // the next message shows the real, measured size again
     if (e.command) return next(e)
     const s = stageOf(e.text)
-    if (s && s.key !== stage?.key) { stage = s; switchDone = false; $.ui.invalidate('ui.render') }
+    if (s?.key !== stage?.key) { switchDone = false; $.ui.invalidate('ui.render') }
+    stage = s
     let note: string | undefined
     try {
       const { size, at, pct } = await measure($)
@@ -219,7 +230,9 @@ export const register: Register = on => {
     const { Box, Button, Text } = $.ui.resolve(e)
     let current = ''
     try { current = (await $.session.model()).toLowerCase() } catch {}
-    const offer = stage && !switchDone && !current.includes(stage.family) ? stage : undefined
+    // no offer when the current model can't be read or isn't one it knows: it might already be right
+    const known = FAMILIES.some(f => current.includes(f))
+    const offer = stage && !switchDone && known && !current.includes(stage.family) ? stage : undefined
     const m = await measure($)
     const { at } = m
     // While the compact slide or the green line shows, draw the sliding size, not the old one.

@@ -119,9 +119,12 @@ circle{vector-effect:non-scaling-stroke}
   }
   G.nodes.forEach(draw);
 
+  let clips = 0;
   // a dot's miniature: drawn the first time it is needed, then only faded
   function mini(v) {
-    const n = v.n, g = el("g", {class:"mini", "pointer-events":"none"}, v.g);
+    const n = v.n, id = "mclip-" + (++clips), clip = el("clipPath", {id}, defs);
+    el("circle", {cx:n.x, cy:n.y, r:n.r}, clip); // nothing of a miniature spills out of its dot
+    const g = el("g", {class:"mini", "pointer-events":"none", "clip-path":"url(#" + id + ")"}, v.g);
     for (const [x, y, r, t, a] of n.mini) {
       const cx = n.x + x * n.r, cy = n.y + y * n.r, rr = Math.max(r * n.r, 0.02);
       const cls = t === "project" ? "wp" : t === "group" || t === "folder" ? "w" : "";
@@ -187,7 +190,7 @@ circle{vector-effect:non-scaling-stroke}
       d.appendChild(document.createTextNode("Project with " + kids.length + " graph" + (kids.length === 1 ? "" : "s") + "."));
     } else {
       d.appendChild(document.createTextNode(n.count + " nodes" + (n.links ? ", " + n.links + " links" : "") + ". "));
-      const a = document.createElement("a"); a.href = n.file; a.textContent = "Open this graph"; d.appendChild(a);
+      const a = document.createElement("a"); a.href = "./" + encodeURIComponent(n.file); a.textContent = "Open this graph"; d.appendChild(a);
     }
     apply();
   }

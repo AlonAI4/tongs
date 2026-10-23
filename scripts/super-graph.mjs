@@ -26,6 +26,7 @@ import { packSiblings, labelBox, LEVELS, REF_W, renderPage } from "./agent-graph
 export const IMAGE_MAX = 200 * 1024;
 const IMAGE_TYPES = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".svg": "image/svg+xml" };
 const SKIP = new Set(["latest.html", "super.html"]);
+const NAME = /^\w[\w.-]*\.html$/; // the names serve-maps.mjs serves: safe in a link, no scheme, # or ?
 const DATA = /<script type="application\/json" id="graph-data">([\s\S]*?)<\/script>/;
 
 // ---------------------------------------------------------------- reading
@@ -34,16 +35,19 @@ export function readMaps(dir) {
   let names = [];
   try { names = readdirSync(dir).filter(f => f.endsWith(".html") && !SKIP.has(f)).sort(); } catch { return { maps, problems }; }
   for (const file of names) {
+    if (!NAME.test(file)) { problems.push(file + ": rename it to letters, digits, dots and dashes to include it"); continue; }
     let data;
     try {
       const m = DATA.exec(readFileSync(join(dir, file), "utf8"));
       if (!m) continue; // not a Tongs graph page
       data = JSON.parse(m[1]);
     } catch { problems.push(file + ": its graph data could not be read"); continue; }
-    if (!data || !Array.isArray(data.nodes) || !data.nodes.length) { problems.push(file + ": no nodes"); continue; }
+    const nodes = data && Array.isArray(data.nodes) ? data.nodes.filter(n => n && typeof n === "object" && typeof n.id === "string" && !n.overlay) : [];
+    if (!nodes.length) { problems.push(file + ": no nodes"); continue; }
+    if (nodes.some(n => n.type === "map")) continue; // a super graph saved under another name
     const name = basename(file, ".html");
-    const agents = data.nodes.some(n => typeof n.x === "number");
-    const nodes = data.nodes.filter(n => n && typeof n.id === "string" && !n.overlay);
+    const num = v => typeof v === "number" && Number.isFinite(v);
+    const agents = nodes.every(n => num(n.x) && num(n.y) && num(n.r));
     maps.push({
       name, file, agents,
       title: typeof data.title === "string" && data.title ? data.title : agents ? "Agent graph" : name,
@@ -70,17 +74,19 @@ export function readImages(dir, names) {
     }
   }
   let others = [];
-  try { others = readdirSync(dir).filter(f => !(extname(f).toLowerCase() in IMAGE_TYPES) && !f.startsWith(".")); } catch {}
+  try { others = readdirSync(dir, { withFileTypes: true }).filter(e => e.isFile() && !(extname(e.name).toLowerCase() in IMAGE_TYPES) && !e.name.startsWith(".")).map(e => e.name); } catch {}
   for (const f of others.sort()) problems.push(f + ": only .png, .jpg or .svg can be a dot, skipped");
   return { images, problems };
 }
 
 // forge-1, forge_2, forge 3 -> "forge"
-const prefixOf = name => name.toLowerCase().split(/[-_ .]/)[0] || name.toLowerCase();
+// a prefix with no letter (a date, a number) groups nothing
+const prefixOf = name => { const p = name.toLowerCase().split(/[-_ .]/)[0]; return /[a-z]/.test(p) ? p : name.toLowerCase(); };
 
 export function projectsOf(maps) {
-  const count = new Map();
-  for (const m of maps) if (!m.project) count.set(prefixOf(m.name), (count.get(prefixOf(m.name)) || 0) + 1);
+  // a map that names its project counts too, so forge-1 joins a map whose project is "forge"
+  const count = new Map(), add = k => count.set(k, (count.get(k) || 0) + 1);
+  for (const m of maps) add(m.project || prefixOf(m.name));
   return maps.map(m => m.project || (count.get(prefixOf(m.name)) > 1 ? prefixOf(m.name) : m.name.toLowerCase()));
 }
 

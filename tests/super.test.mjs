@@ -37,7 +37,7 @@ test("reads the graph data from each page as text: latest.html, super.html and p
 test("projects: forge-1, forge-2, forge-3 share 'forge'; a map with no shared prefix is its own; a map's project field wins", () => {
   const maps = ["forge-1", "forge-2", "forge_3", "zenith-mc", "solo"].map(name => ({ name, project: null, nodes: [{}] }));
   assert.deepEqual(projectsOf(maps), ["forge", "forge", "forge", "zenith-mc", "solo"]);
-  assert.deepEqual(projectsOf([{ name: "scratch-2026", project: "tongs", nodes: [{}] }, { name: "tongs-sample", project: null, nodes: [{}] }]), ["tongs", "tongs-sample"]);
+  assert.deepEqual(projectsOf([{ name: "scratch-2026", project: "tongs", nodes: [{}] }, { name: "tongs-sample", project: null, nodes: [{}] }]), ["tongs", "tongs"]);
 });
 
 test("your own dot image: png, jpg and svg are embedded as data URIs, over 200 KB or another type is skipped with a warning", () => {
@@ -129,4 +129,26 @@ test("command line: writes the page with your image, and says when there is noth
   const bad = spawnSync(process.execPath, [SCRIPT, "--out", "--no-open"], { encoding: "utf8" });
   assert.equal(bad.status, 1);
   assert.match(bad.stderr, /--out needs a value/);
+});
+
+test("review fixes: odd nodes, unsafe file names and saved super pages are skipped, never fatal", () => {
+  const d = newDir();
+  writeFileSync(join(d, "ok.html"), page({ nodes: [null, 7, { id: "a", type: "goal" }] }));
+  writeFileSync(join(d, "javascript:alert(1);a={}.html"), page(chatMap(3)));
+  writeFileSync(join(d, "super2.html"), page({ nodes: [{ id: "m:x", type: "map", x: 1, y: 1, r: 1 }] }));
+  const { maps, problems } = readMaps(d);
+  assert.deepEqual(maps.map(m => m.name), ["ok"]);
+  assert.equal(maps[0].nodes.length, 1);
+  assert.ok(problems.some(p => p.startsWith("javascript:alert(1);a={}.html: rename it")), problems.join("\n"));
+  const html = readFileSync(join(dirname(SCRIPT), "super-template.html"), "utf8");
+  assert.match(html, /a\.href = "\.\/" \+ encodeURIComponent\(n\.file\)/);
+  assert.match(html, /"clip-path":"url\(#" \+ id \+ "\)"\}, v\.g\)/); // miniatures are clipped to their dot
+});
+
+test("review fixes: forge-1 joins a map whose project is forge; a date prefix groups nothing; folders in dots/ are not warned about", () => {
+  assert.deepEqual(projectsOf([{ name: "forge", project: "forge" }, { name: "forge-1", project: null }]), ["forge", "forge"]);
+  assert.deepEqual(projectsOf([{ name: "2026-10-01-a", project: null }, { name: "2026-10-02-b", project: null }]), ["2026-10-01-a", "2026-10-02-b"]);
+  const d = newDir();
+  mkdirSync(join(d, "old"));
+  assert.deepEqual(readImages(d, []).problems, []);
 });
