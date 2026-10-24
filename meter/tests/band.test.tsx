@@ -294,7 +294,10 @@ test('after Compact the band turns green and starts the size at the old number, 
   await ui.unmount()
 })
 
-// The stage switch: one button at the left, only when the latest message suits another model.
+// The stage switch: one button at the left, only when what is being typed suits another model.
+// The draft is typed from an empty box each time, as prompt.edit raises it.
+const draft = ($: any, text: string) =>
+  $.prompt.edit({ origin: { kind: 'composer' }, text: '', cursor: 0, start: 0, end: 0, inputText: text })
 async function switchSetup(on: any, model: { now: string }, runs: string[], hasEffort = true, modelWorks = true) {
   on('ui.render', ($: any, e: any) => { const { Box } = $.ui.resolve(e); return <Box /> })
   mock.env(on, { HOME })
@@ -302,6 +305,8 @@ async function switchSetup(on: any, model: { now: string }, runs: string[], hasE
   on('session.usage', usageAt(100000))
   on('session.model', () => ({ value: model.now }))
   on('prompt.submit', ($: any, e: any) => ({ text: e.text }))
+  // what the engine does with an edit: splice the typed text into the box
+  on('prompt.edit', ($: any, e: any) => ({ text: e.text.slice(0, e.start) + e.inputText + e.text.slice(e.end), cursor: e.start + e.inputText.length }))
   on('command.list', () => ({ value: hasEffort ? [{ name: 'model' }, { name: 'effort' }] : [{ name: 'model' }] }))
   on('command.run', ($: any, e: any) => { runs.push(`/${e.command} ${e.args}`); if (e.command === 'model' && modelWorks) model.now = e.args; return { text: modelWorks ? '' : 'Unknown model' } })
 }
@@ -312,41 +317,41 @@ const switchLabel = async ($: any) => {
   return b?.props.label as string | undefined
 }
 
-test('stage switch: no button until a message reads like a stage, then the exact setting for each one', async ($, on) => {
+test('stage switch: no button until the draft reads like a stage, then the exact setting for each one', async ($, on) => {
   const model = { now: 'claude-sonnet-5-5' }
   await switchSetup(on, model, [])
   expect(await switchLabel($)).toBeUndefined()
-  await submit($, 'ok thanks, looks fine')
+  await draft($, 'ok thanks, looks fine')
   expect(await switchLabel($)).toBeUndefined() // neutral: nothing
-  await submit($, 'lets brainstorm some names')
+  await draft($, 'lets brainstorm some names')
   expect(await switchLabel($)).toBe('Switch to haiku 5.5 medium')
-  await submit($, 'now build the super graph')
+  await draft($, 'now build the super graph')
   expect(await switchLabel($)).toBe('Switch to opus 5.5 medium')
-  await submit($, 'it is still failing, I am stuck')
+  await draft($, 'it is still failing, I am stuck')
   expect(await switchLabel($)).toBe('Switch to fable 5.1 high')
-  await submit($, 'run the tests please')
+  await draft($, 'run the tests please')
   expect(await switchLabel($)).toBeUndefined() // already on sonnet: no button
 })
 
 test('stage switch: pressing sets model and effort, Not now hides it, a new stage brings it back', async ($, on) => {
   const model = { now: 'claude-sonnet-5-5' }, runs: string[] = []
   await switchSetup(on, model, runs)
-  await submit($, 'implement part two')
+  await draft($, 'implement part two')
   let ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
   await ui.press({ key: 'switch' })
   await ui.unmount()
-  expect(runs).toEqual(['/model claude-opus-5-5', '/effort medium'])
+  expect(runs).toEqual(['/model claude-opus-5-5']) // medium is the usual effort: no /effort line in the chat
   expect(await switchLabel($)).toBeUndefined() // pressed: gone (and now on opus anyway)
-  await submit($, 'brainstorm ideas for the logo')
+  await draft($, 'brainstorm ideas for the logo')
   ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
   await ui.press({ key: 'switch-no' })
   await ui.unmount()
   expect(await switchLabel($)).toBeUndefined() // dismissed
-  await submit($, 'brainstorm names for the mascot too') // same stage again: stays hidden
+  await draft($, 'brainstorm names for the mascot too') // same stage again: stays hidden
   expect(await switchLabel($)).toBeUndefined()
-  await submit($, 'ok') // a message with no stage clears it
+  await draft($, 'ok') // a message with no stage clears it
   expect(await switchLabel($)).toBeUndefined()
-  await submit($, 'review the diff')
+  await draft($, 'review the diff')
   expect(await switchLabel($)).toBe('Switch to sonnet 5.5 medium') // a new stage: back
 })
 
@@ -354,7 +359,7 @@ test('stage switch: with no /effort command it sets the model and says how to se
   const model = { now: 'claude-sonnet-5-5' }, runs: string[] = [], toasts: string[] = []
   await switchSetup(on, model, runs, false)
   on('ui.toast', ($: any, e: any) => { toasts.push(e.text); return {} })
-  await submit($, 'I am stuck on this bug')
+  await draft($, 'I am stuck on this bug')
   const ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
   await ui.press({ key: 'switch' })
   await ui.unmount()
@@ -367,7 +372,7 @@ test('stage switch: common words do not trigger it, and a long pasted log only c
   await switchSetup(on, model, [])
   for (const text of ['check that it works', 'I have no idea why this fails', 'the build failed again', 'open the forge folder',
     'here is the log: ' + 'x'.repeat(400) + ' implement build test brainstorm']) {
-    await submit($, text)
+    await draft($, text)
     expect(await switchLabel($)).toBeUndefined()
   }
 })
@@ -376,20 +381,54 @@ test('stage switch: the offer lasts one message, and a /model that did not chang
   const model = { now: 'claude-sonnet-5-5' }, toasts: string[] = []
   await switchSetup(on, model, [], true, false) // /model answers, but the model stays
   on('ui.toast', ($: any, e: any) => { toasts.push(e.text); return {} })
-  await submit($, 'implement the super graph')
+  await draft($, 'implement the super graph')
   expect(await switchLabel($)).toBe('Switch to opus 5.5 medium')
   const ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
   await ui.press({ key: 'switch' })
   await ui.unmount()
   expect(toasts.at(-1)).toBe('Could not switch to opus 5.5. Type /model claude-opus-5-5')
   expect(await switchLabel($)).toBe('Switch to opus 5.5 medium') // back, since it did not work
-  await submit($, 'thanks')
+  await draft($, 'thanks')
   expect(await switchLabel($)).toBeUndefined()
 })
 
 test('stage switch: hidden when the current model cannot be read', async ($, on) => {
   const model = { now: 'some-custom-model' }
   await switchSetup(on, model, [])
-  await submit($, 'implement it')
+  await draft($, 'implement it')
   expect(await switchLabel($)).toBeUndefined()
+})
+
+test('stage switch: a stage that wants another effort sets it after the model', async ($, on) => {
+  const model = { now: 'claude-sonnet-5-5' }, runs: string[] = []
+  await switchSetup(on, model, runs)
+  await draft($, 'I am stuck on this bug')
+  const ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
+  await ui.press({ key: 'switch' })
+  await ui.unmount()
+  expect(runs).toEqual(['/model claude-fable-5-1', '/effort high'])
+})
+
+test('stage switch: planning words offer sonnet, and sending the message clears the button', async ($, on) => {
+  const model = { now: 'claude-opus-5-5' }
+  await switchSetup(on, model, [])
+  for (const text of ['make a plan for stage six', 'ask me questions first', 'critique this idea']) {
+    await draft($, text)
+    expect(await switchLabel($)).toBe('Switch to sonnet 5.5 medium')
+  }
+  await submit($, 'critique this idea') // sent: the box is empty, nothing to offer for it
+  expect(await switchLabel($)).toBeUndefined()
+})
+
+test('stage switch: no button while Claude is replying, and it is back when the reply ends', async ($, on) => {
+  const model = { now: 'claude-sonnet-5-5' }
+  await switchSetup(on, model, [])
+  on('turn.start', ($: any, e: any) => ({ turnId: e.turnId }))
+  on('turn.complete', ($: any, e: any) => ({ text: e.answer }))
+  await draft($, 'implement part two')
+  expect(await switchLabel($)).toBe('Switch to opus 5.5 medium')
+  await $.turn.start({ text: 'earlier message', turnId: 't1' })
+  expect(await switchLabel($)).toBeUndefined() // a reply is running
+  await $.turn.complete(turn('done'))
+  expect(await switchLabel($)).toBe('Switch to opus 5.5 medium')
 })

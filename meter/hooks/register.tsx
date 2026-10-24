@@ -10,8 +10,9 @@
 // Past 100% the chat may keep going, but every message the person sends then carries a
 // note to Claude (never shown) to say so and offer /tongs. And when /tongs ends its reply
 // with its /compact line, the meter runs that compaction itself, so nobody has to type it.
-// When the latest message reads like a new stage of work (brainstorming, testing, building,
-// stuck) that suits another model, one button at the left offers the exact setting.
+// When what you are typing reads like a new stage of work (brainstorming, planning, testing,
+// building, stuck) that suits another model, one button at the left offers the exact setting
+// before you send, and only while Claude is not replying (a /model mid-reply does not take).
 // The size is the engine's own figure ($.session.usage(), free to call), redrawn
 // after each reply. The meter never sends a prompt or starts a Claude turn.
 import type { EngineInterface, Register } from 'claude-code'
@@ -111,16 +112,21 @@ const STAGES = [
   { key: 'stuck', words: /\b(i'?m stuck|i am stuck|stuck on|still (failing|broken)|hardest bug|tried (it )?twice)\b/i, family: 'fable', model: 'claude-fable-5-1', label: 'fable 5.1', effort: 'high' },
   { key: 'brainstorm', words: /\b(brainstorm\w*|name ideas|names for|ideas for|give me ideas|plan the idea)\b/i, family: 'haiku', model: 'claude-haiku-5-5', label: 'haiku 5.5', effort: 'medium' },
   { key: 'test', words: /\b(use forge|run the tests|test (it|this|that|everything)|write (the )?tests|review (it|this|the (diff|code|changes)))\b/i, family: 'sonnet', model: 'claude-sonnet-5-5', label: 'sonnet 5.5', effort: 'medium' },
+  { key: 'plan', words: /\b(make a plan|write a plan|plan (it|this|the (next|stages?|steps?|work))|ask (me )?questions|critique|debate|decide)\b/i, family: 'sonnet', model: 'claude-sonnet-5-5', label: 'sonnet 5.5', effort: 'medium' },
   { key: 'build', words: /\b(build (a|an|the|me|it|this)|implement|architecture|refactor)\b/i, family: 'opus', model: 'claude-opus-5-5', label: 'opus 5.5', effort: 'medium' },
 ] as const
 type Stage = (typeof STAGES)[number]
 // Only the start of a message counts, so a pasted log full of "test" and "build" suggests nothing.
 export const stageOf = (text: string): Stage | undefined => STAGES.find(s => s.words.test(text.slice(0, 300)))
-let stage: Stage | undefined // the stage the latest message suggests; a message with none clears it
-let switchDone = false // pressed or dismissed: hidden while the messages stay in that stage
+let stage: Stage | undefined // the stage the draft suggests; a draft with none clears it
+let switchDone = false // pressed or dismissed: hidden while the draft stays in that stage
+let busy = false // Claude is replying: /model does nothing then, so no button
+let failed: string | undefined // why the last switch did not work, shown in the band until the draft changes
 const FAMILIES = ['haiku', 'sonnet', 'opus', 'fable']
 
 async function switchTo($: EngineInterface, s: Stage) {
+  if (busy) { failed = 'Claude is still replying. Switch when it has finished.'; $.ui.toast(failed); $.ui.invalidate('ui.render'); return }
+  failed = undefined
   switchDone = true
   $.ui.invalidate('ui.render')
   let now = ''
@@ -131,10 +137,14 @@ async function switchTo($: EngineInterface, s: Stage) {
   // /model answers with text rather than failing, so check the model really changed
   if (!now.includes(s.family)) {
     switchDone = false
+    failed = `Could not switch to ${s.label}. Type /model ${s.model}`
     $.ui.invalidate('ui.render')
-    $.ui.toast(`Could not switch to ${s.label}. Type /model ${s.model}`)
+    $.ui.toast(failed)
     return
   }
+  // The model switch keeps the effort you had, and /effort prints a line in the chat, so only
+  // set it when the stage wants something other than the usual medium.
+  if (s.effort === 'medium') { $.ui.toast(`Switched to ${s.label}.`); return }
   let effortSet = false
   try {
     if ((await $.command.list()).some(c => c.name === 'effort')) { await $.command.run({ command: 'effort', args: s.effort }); effortSet = true }
@@ -198,10 +208,8 @@ export const register: Register = on => {
   // command's line takes no rewrite, so it goes as it is.
   on('prompt.submit', async ($, e, next) => {
     done = undefined // the next message shows the real, measured size again
+    stage = undefined; switchDone = false; failed = undefined // the box is emptied by this send
     if (e.command) return next(e)
-    const s = stageOf(e.text)
-    if (s?.key !== stage?.key) { switchDone = false; $.ui.invalidate('ui.render') }
-    stage = s
     let note: string | undefined
     try {
       const { size, at, pct } = await measure($)
@@ -210,10 +218,24 @@ export const register: Register = on => {
     return next(note ? { ...e, context: [...(e.context ?? []), note] } : e)
   })
 
+  // The draft decides the stage, so the button shows before the message is sent. A sent
+  // message empties the box, so the stage is cleared in prompt.submit.
+  on('prompt.edit', async ($, e, next) => {
+    const r = await next(e)
+    const s = stageOf(r.text)
+    if (s?.key !== stage?.key) { switchDone = false; failed = undefined; stage = s; $.ui.invalidate('ui.render') }
+    return r
+  })
+  on('turn.start', ($, e, next) => {
+    if (e.agentId === undefined) { busy = true; $.ui.invalidate('ui.render') }
+    return next(e)
+  })
+
   // /tongs ends its reply with a /compact line; once that reply is finished, run it here.
   on('skill.prompt', { skill: 'tongs' }, ($, e, next) => { tongsRan = true; return next(e) })
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
+    if (e.agentId === undefined) { busy = false; $.ui.invalidate('ui.render') }
     if (e.agentId === undefined && tongsRan) {
       tongsRan = false
       const line = /^\/compact[ \t]+(\S.*)$/m.exec(e.answer)
@@ -233,7 +255,7 @@ export const register: Register = on => {
     try { current = (await $.session.model()).toLowerCase() } catch {}
     // no offer when the current model can't be read or isn't one it knows: it might already be right
     const known = FAMILIES.some(f => current.includes(f))
-    const offer = stage && !switchDone && known && !current.includes(stage.family) ? stage : undefined
+    const offer = stage && !switchDone && !busy && known && !current.includes(stage.family) ? stage : undefined
     const m = await measure($)
     const { at } = m
     // While the compact slide or the green line shows, draw the sliding size, not the old one.
@@ -265,13 +287,13 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         {below}
-        <Box justifyContent={offer ? 'space-between' : 'flex-end'} gap={1}>
+        <Box justifyContent={offer || failed ? 'space-between' : 'flex-end'} gap={1}>
           {offer ? (
             <Box gap={1}>
               <Button key="switch" label={`Switch to ${offer.label} ${offer.effort}`} onPress={() => switchTo($, offer)} />
               <Button key="switch-no" label="Not now" onPress={() => { switchDone = true; $.ui.invalidate('ui.render') }} />
             </Box>
-          ) : null}
+          ) : failed ? <Text color="#ff6b6b" bold>{failed}</Text> : null}
           <Box gap={1}>
           {line}
           {isBig ? <Button key="compact" label="Compact" onPress={() => compact($)} /> : null}
