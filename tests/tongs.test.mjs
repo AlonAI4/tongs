@@ -4,7 +4,7 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -221,4 +221,24 @@ test("command line: writes the page and index.md with ~ paths only; no home path
   const none = spawnSync(process.execPath, [SCRIPT, "--no-open", "--tracker", newDir("empty"), "--out", join(TMP, "x.html")], { env: { ...process.env, HOME: home }, encoding: "utf8" });
   assert.equal(none.status, 1);
   assert.match(none.stderr, /no projects found/);
+});
+
+test("public version: no chat map text, file names, resume prompts or 'other'; the page opens on a project from the link", () => {
+  const s = sample();
+  s.maps[0].nodes[0].label = "SECRET-DECISION-TEXT";
+  const g = buildMap({ ...s, pub: true }), json = JSON.stringify(g);
+  assert.ok(!json.includes("SECRET-DECISION-TEXT") && !json.includes("Read ~/") && !json.includes("resume") && !json.includes("scripts/a.mjs"));
+  assert.ok(!g.nodes.some(x => x.id === "p:~other" || x.p === "p:~other"), "nothing from folders off the tracker");
+  assert.equal(g.public, true);
+  assert.deepEqual(g.nodes.filter(x => x.p === "p:forge" && x.k === "part").map(x => x.label).sort(), ["decision", "decision", "decision", "decision", "decision", "decision", "decision", "decision", "goal"].sort().map(x => (x === "decision" ? "done" : x)));
+  assert.ok(g.nodes.some(x => x.k === "agent"), "agents (model and size only) are still shown");
+  assert.equal(buildMap(sample()).public, false);
+  assert.match(TEMPLATE, /byId\.get\("p:" \+ h\)/);
+  assert.match(TEMPLATE, /addEventListener\("hashchange"/);
+  const home = newDir("zqhome"), out = join(home, "site", "tongs", "index.html");
+  const r = spawnSync(process.execPath, [SCRIPT, "--no-open", "--public", "--tracker", fakeTracker(), "--maps", join(home, "none"), "--logs", join(home, "none"), "--out", out], { env: { ...process.env, HOME: home }, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Public version/);
+  assert.ok(!readFileSync(out, "utf8").includes('"public":false'));
+  assert.equal(readdirSync(dirname(out)).join(), "index.html", "no index.md next to a public page");
 });

@@ -4,7 +4,10 @@
 // project's chat map nodes, then their links, then the agents (chats and subagents) that worked on it.
 //
 // Usage:  node tongs-map.mjs [--out <file.html>] [--no-open] [--maps <dir>] [--tracker <dir>]
-//                            [--logs <dir>] [--days <n>]
+//                            [--logs <dir>] [--days <n>] [--public]
+// --public: the version for a website (the tracker's publish.sh uses it). Leaves out chat map text,
+//        file names, resume prompts and anything from folders that are not on the tracker, and writes
+//        no index.md. The page opens zoomed to a project with a link like tongs/#forge.
 //
 // Reads  ~/ai-tracker/projects (index.json and each project's "meta" only; never writes there),
 //        ~/ai-tracker/chat-maps/GROUP-CHAT.md (when it last changed, never its text),
@@ -169,25 +172,28 @@ function relax(list, { passes, gap, pull, springs = [], len = 0, keepOut = null 
   }
 }
 
-export function buildMap({ tracker, maps = [], agents = [], mapsDir = "~/.claude/tongs-maps", now = Date.now() }) {
+// pub: the version for a website. Chat map text, file names and resume prompts are left out (a part is
+// only its type), and nothing from folders that are not on the tracker is shown at all.
+export function buildMap({ tracker, maps = [], agents = [], mapsDir = "~/.claude/tongs-maps", now = Date.now(), pub = false }) {
   const projects = tracker.projects.map((p, i) => ({ id: "p:" + p.id, k: "project", label: p.title, src: p, color: projectColor(i), kids: [], more: 0 }));
   const lookup = new Map();
   for (const p of projects) for (const k of [key(p.src.id), key(p.src.title)]) if (k && !lookup.has(k)) lookup.set(k, p);
   let other = null;
   const otherProject = () => other || (other = { id: "p:~other", k: "project", label: "other", src: null, color: COLORS.other, kids: [], more: 0 });
-  const find = names => names.map(key).map(k => lookup.get(k)).find(Boolean) || null;
+  const find = names => names.map(key).map(k => lookup.get(k)).find(Boolean) || (pub ? null : otherProject());
 
   const edges = []; // [from id, to id, kind, extra]
 
   // chat maps: their nodes are the project's parts, their links its links
   for (const m of maps.slice().sort((a, b) => (a.name < b.name ? -1 : 1))) {
-    const p = find([m.project, m.name, m.name.split(/[-_.]/)[0]]) || otherProject();
+    const p = find([m.project, m.name, m.name.split(/[-_.]/)[0]]);
+    if (!p) continue;
     m.projectLabel = p.label;
     const goal = m.nodes.find(n => n.type === "goal") || m.nodes[0];
     const path = mapsDir + "/" + (m.json || m.file);
     for (const n of m.nodes) {
-      p.kids.push({ id: `m:${m.name}:${n.id}`, k: "part", t: n.type, label: n.label.length > 60 ? n.label.slice(0, 59) + "..." : n.label,
-        map: m.title, file: m.file, resume: resumePrompt(path, n.id) });
+      p.kids.push({ id: `m:${m.name}:${n.id}`, k: "part", t: n.type, label: pub ? n.type : n.label.length > 60 ? n.label.slice(0, 59) + "..." : n.label,
+        ...(pub ? {} : { map: m.title, file: m.file, resume: resumePrompt(path, n.id) }) });
     }
     edges.push([`m:${m.name}:${goal.id}`, p.id, "own"]);
     for (const l of m.links) edges.push([`m:${m.name}:${l.from}`, `m:${m.name}:${l.to}`, "map"]);
@@ -200,7 +206,8 @@ export function buildMap({ tracker, maps = [], agents = [], mapsDir = "~/.claude
   const projOf = new Map(), shared = new Map(); // project -> paths its agents touched
   for (const a of agents) {
     const head = a.sub && byId.has(a.parentKey) ? byId.get(a.parentKey) : a;
-    const p = find([head.project]) || otherProject();
+    const p = find([head.project]);
+    if (!p) continue;
     projOf.set(a.id, p);
     if (p === other) continue;
     if (!shared.has(p)) shared.set(p, new Set());
@@ -210,6 +217,7 @@ export function buildMap({ tracker, maps = [], agents = [], mapsDir = "~/.claude
   for (const a of agents) {
     if (a.fresh < LIMITS.foldBelow && !isActive(a)) continue;
     const p = projOf.get(a.id);
+    if (!p) continue;
     if (!byProject.has(p)) byProject.set(p, []);
     byProject.get(p).push(a);
   }
@@ -318,7 +326,7 @@ export function buildMap({ tracker, maps = [], agents = [], mapsDir = "~/.claude
     edges: edges.filter(e => index.has(e[0]) && index.has(e[1])).map(e => (e[3] ? [index.get(e[0]), index.get(e[1]), e[2], e[3]] : [index.get(e[0]), index.get(e[1]), e[2]])),
     colors: { ...COLORS, projects: list.map(p => p.color) },
     projects: projects.length, active: activeAll.filter(n => !n.sub).length, glowMore: Math.max(0, activeAll.length - LIMITS.glow),
-    generated: minute(now), activeMin: ACTIVE_MIN,
+    generated: minute(now), activeMin: ACTIVE_MIN, public: pub,
   };
 }
 const round4 = v => Math.round(v * 1e4) / 1e4;
@@ -399,7 +407,8 @@ async function main() {
   const mapsDir = resolve(opt("--maps") || join(home, ".claude", "tongs-maps"));
   const trackerDir = resolve(opt("--tracker") || join(home, "ai-tracker"));
   const logs = resolve(opt("--logs") || join(home, ".claude", "projects"));
-  const out = resolve(opt("--out") || join(home, ".claude", "tongs-maps", "tongs.html"));
+  const pub = args.includes("--public");
+  const out = resolve(opt("--out") || join(home, ".claude", "tongs-maps", pub ? "tongs-public.html" : "tongs.html"));
   const days = Number(opt("--days") || 14);
   if (!(days > 0)) { console.error("tongs-map: --days must be a number above 0"); process.exit(1); }
 
@@ -407,19 +416,20 @@ async function main() {
   if (!tracker.projects.length) { console.error("tongs-map: no projects found in " + tilde(join(trackerDir, "projects", "index.json"), home) + ". Use --tracker <folder>."); process.exit(1); }
   const { maps, problems } = readMaps(mapsDir);
   const { agents, problems: bad } = existsSync(logs) ? await readLogs(logs, { days, home }) : { agents: [], problems: [] };
-  const graph = buildMap({ tracker, maps, agents, mapsDir: tilde(mapsDir, home) });
+  const graph = buildMap({ tracker, maps, agents, mapsDir: tilde(mapsDir, home), pub });
   for (const p of problems) console.warn("tongs-map: " + p);
   if (bad.length) console.warn(`tongs-map: skipped ${bad.length} bad log lines`);
 
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, renderPage(graph));
   const idx = join(dirname(out), "index.md");
-  writeFileSync(idx, "# Tongs maps\n\nOne line per chat map: project | map | goal | last updated. Read the map, then continue from a node.\n\n" +
+  if (!pub) writeFileSync(idx, "# Tongs maps\n\nOne line per chat map: project | map | goal | last updated. Read the map, then continue from a node.\n\n" +
     (maps.length ? indexLines(maps, tilde(mapsDir, home)).join("\n") : "No chat maps yet. Run /tongs in a chat to make one.") + "\n");
   const count = k => graph.nodes.filter(n => n.k === k).length;
   console.log(`Tongs map: ${graph.projects} projects, ${maps.length} chat maps (${count("part")} nodes), ${count("agent")} agents, ${graph.active} chats active`);
   console.log("Wrote  " + tilde(out, home));
-  console.log("Wrote  " + tilde(idx, home));
+  if (!pub) console.log("Wrote  " + tilde(idx, home));
+  else console.log("Public version: no chat map text, file names, resume prompts or folders outside the tracker.");
   if (!args.includes("--no-open")) {
     const opener = platform() === "darwin" ? "open" : platform() === "linux" ? "xdg-open" : null;
     if (!opener) console.log("Open it in a browser: " + out);

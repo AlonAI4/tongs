@@ -305,7 +305,7 @@ function select(n) {
   info.append(el("b", n.label));
   if (n.k === "agent") info.append(el("span", n.act ? "active" : "idle", "state" + (n.act ? " on" : "")));
   const p = n.p ? byId.get(n.p) : null;
-  if (n.k === "part") info.append(el("div", `${n.t} in the chat map "${n.map}" (${p.label})`));
+  if (n.k === "part") info.append(el("div", n.map ? `${n.t} in the chat map "${n.map}" (${p.label})` : `A ${n.t} node of a chat map in ${p.label}.`));
   if (n.detail) info.append(el("div", n.detail));
   if (n.file) { const a = el("a", "Open this chat map"); a.href = "./" + encodeURIComponent(n.file); const d = el("div"); d.append(a); info.append(d); }
   copy.disabled = !n.resume;
@@ -350,8 +350,9 @@ q.addEventListener("keydown", e => {
 const pad = v => String(v).padStart(2, "0");
 const built = new Date(Date.parse(G.generated + ":00Z"));
 const builtAt = `${pad(built.getHours())}:${pad(built.getMinutes())}`;
-document.getElementById("snap").textContent = `A snapshot built at ${builtAt}. Run tongs-map.mjs again to refresh it.`;
+document.getElementById("snap").textContent = `A snapshot built at ${builtAt}.` + (G.public ? " Public version: chat map text, file names and resume prompts are left out." : " Run tongs-map.mjs again to refresh it.");
 document.getElementById("idleDot").style.background = C.idle;
+if (G.public) copy.parentElement.hidden = true; // no resume prompts in the public version
 if (G.glowMore) { const m = document.getElementById("more"); m.hidden = false; m.textContent = `+${G.glowMore} more active`; }
 function status() {
   document.getElementById("status").textContent = `${G.projects} projects, ${G.active} chat${G.active === 1 ? "" : "s"} active, built ${builtAt}`;
@@ -374,7 +375,20 @@ toggle.addEventListener("click", () => { const open = panel.classList.toggle("cl
 // for measuring: draws n frames while panning and zooming, returns the slowest in ms
 window.tongsPerf = n => { const v = { ...view }, times = []; for (let i = 0; i < n; i++) { view = { z: v.z * (1 + i / n * 3), x: v.x - i * 3, y: v.y - i * 2 }; const t = performance.now(); draw(i * 16); times.push(performance.now() - t); } view = v; request(); return { max: Math.max(...times), mean: times.reduce((s, x) => s + x, 0) / n }; };
 
-new ResizeObserver(() => { const first = !W; resize(); if (first) view = fit(); }).observe(canvas);
+// A link like tongs/#forge opens the map zoomed to that project (its id or its title)
+function projectOfHash() {
+  let h = ""; try { h = decodeURIComponent(location.hash.slice(1)).toLowerCase(); } catch {}
+  return h ? byId.get("p:" + h) || N.find(n => n.k === "project" && n.label.toLowerCase() === h) : null;
+}
+function viewOn(p) {
+  let fr = p.r;
+  for (const n of N) if (n.p === p.id) fr = Math.max(fr, Math.hypot(n.x - p.x, n.y - p.y) + n.r);
+  const z = Math.min(ZMAX, Math.max(G.stages[2][1] * 1.05, 0.42 * Math.min(W, H) / (fr + 20)));
+  return { z, x: W / 2 - p.x * z, y: H / 2 - p.y * z };
+}
+addEventListener("hashchange", () => { const p = projectOfHash(); if (p) { select(p); go(viewOn(p)); } else go(fit()); });
+
+new ResizeObserver(() => { const first = !W; resize(); if (first) { const p = projectOfHash(); view = p ? viewOn(p) : fit(); if (p) select(p); } }).observe(canvas);
 if (document.fonts) document.fonts.load("12px 'IBM Plex Mono'").then(request, () => {});
 </script>
 </body>
