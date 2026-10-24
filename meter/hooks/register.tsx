@@ -19,6 +19,7 @@ import type { EngineInterface, Register } from 'claude-code'
 const DEFAULT_LIMIT = 400000
 const WARN_AT = 70 // % of the limit: orange, Compact button
 const DANGER_AT = 85 // %: red, run /tongs now
+const HEAT_FROM = 50 // %: the text starts to warm from here, amber to red at 100%
 // Claude Code auto-compacts about 33k before its window, leaving room for the reply and
 // the summary: a 400k window showed "38k until auto-compact" at 328.2k, and 1M models
 // compact at about 967k.
@@ -242,15 +243,23 @@ export const register: Register = on => {
     if (pct < 100) notNow = false
     const ask = !done && pct >= 100 && !notNow
 
-    // Colour AND words, so it never relies on colour alone.
+    // Colour AND words, so it never relies on colour alone. From half the limit the text warms
+    // step by step, from amber to red at the limit, so it gets redder as the chat grows.
+    const heat = (p: number) => {
+      const t = Math.min(1, Math.max(0, (p - HEAT_FROM) / (100 - HEAT_FROM)))
+      const h = 40 * (1 - t), s = 0.9, l = 0.55
+      const f = (n: number) => { const q = (n + h / 30) % 12; return l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(q - 3, 9 - q, 1)) }
+      return '#' + [0, 8, 4].map(n => Math.round(f(n) * 255).toString(16).padStart(2, '0')).join('')
+    }
     let line
     if (done) {
       const sliding = done.after !== undefined && done.shown !== done.after
       line = <Text color="success" bold>{sliding ? 'compacting' : 'compacted'} · chat {size === undefined ? '' : k(size) + ' / msg · ' + pct + '%'}</Text>
     } else if (size === undefined) line = <Text dimColor>chat size shows after the first reply · {at}</Text>
-    else if (ask) line = <Text color="error" bold>chat {k(size)} / msg · {at} · {pct}%, do you want to compact?</Text>
-    else if (pct >= DANGER_AT) line = <Text color="error" bold>chat {k(size)} / msg · {at} · {pct}%, run /tongs now</Text>
-    else if (isBig) line = <Text color="warning">chat {k(size)} / msg · {at} · {pct}%, map it soon with /tongs</Text>
+    else if (ask) line = <Text color={heat(pct)} bold>chat {k(size)} / msg · {at} · {pct}%, do you want to compact?</Text>
+    else if (pct >= DANGER_AT) line = <Text color={heat(pct)} bold>chat {k(size)} / msg · {at} · {pct}%, run /tongs now</Text>
+    else if (isBig) line = <Text color={heat(pct)}>chat {k(size)} / msg · {at} · {pct}%, map it soon with /tongs</Text>
+    else if (pct >= HEAT_FROM) line = <Text color={heat(pct)}>chat {k(size)} / msg · {at}</Text>
     else line = <Text dimColor>chat {k(size)} / msg · {at}</Text>
 
     return (

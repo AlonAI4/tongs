@@ -7,22 +7,29 @@ const BAND = {
   props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 80, scroll: { offset: 0, bodyRows: 10 }, view: {} },
 } as const
 
-// Each case: tokens re-read, the line shown, its colour, whether Compact shows.
-async function checkCases($: any, cases: readonly { size?: number; text: string; color?: string; compact: boolean }[], setTokens: (n?: number) => void) {
+// The text colour from half the limit: amber warming step by step to red at 100% (the same sum as the mod).
+const heat = (p: number) => {
+  const t = Math.min(1, Math.max(0, (p - 50) / 50)), h = 40 * (1 - t), s = 0.9, l = 0.55
+  const f = (n: number) => { const q = (n + h / 30) % 12; return l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(q - 3, 9 - q, 1)) }
+  return '#' + [0, 8, 4].map(n => Math.round(f(n) * 255).toString(16).padStart(2, '0')).join('')
+}
+
+// Each case: tokens re-read, the line shown, its colour (warm: the % it shows), whether Compact shows.
+async function checkCases($: any, cases: readonly { size?: number; text: string; color?: string; warm?: number; compact: boolean }[], setTokens: (n?: number) => void) {
   for (const surface of ['terminal', 'desktop'] as const) {
     for (const c of cases) {
       setTokens(c.size)
       const ui = await $.ui.mount({ plugin: 'tongs-meter', surface, ...BAND })
       const line = await ui.find({ type: 'Text', text: c.text })
       expect(line).toBeDefined()
-      expect(line?.props.color).toBe(c.color)
+      expect(line?.props.color).toBe(c.warm === undefined ? c.color : heat(c.warm))
       expect((await ui.find({ key: 'compact' })) !== undefined).toBe(c.compact)
       await ui.unmount()
     }
   }
 }
 
-test('a 400k window auto-compacts at 367k: dim below 70%, orange from 256,900, red from 311,950, asks at 367,000', async ($, on) => {
+test('a 400k window auto-compacts at 367k: dim below half, warming from amber to red as it fills, asks at 367,000', async ($, on) => {
   let tokens: number | undefined
   on('ui.render', ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> }) // the engine's empty band
   mock.env(on, { HOME, CLAUDE_CODE_AUTO_COMPACT_WINDOW: '400000' })
@@ -31,12 +38,12 @@ test('a 400k window auto-compacts at 367k: dim below 70%, orange from 256,900, r
   await checkCases($, [
     { size: undefined, text: 'chat size shows after the first reply · auto-compact at 367k', color: undefined, compact: false },
     { size: 120000, text: 'chat 120k / msg · auto-compact at 367k', color: undefined, compact: false },
-    { size: 256899, text: 'chat 257k / msg · auto-compact at 367k', color: undefined, compact: false },
-    { size: 256900, text: 'chat 257k / msg · auto-compact at 367k · 70%, map it soon with /tongs', color: 'warning', compact: true },
-    { size: 311949, text: 'chat 312k / msg · auto-compact at 367k · 84%, map it soon with /tongs', color: 'warning', compact: true },
-    { size: 311950, text: 'chat 312k / msg · auto-compact at 367k · 85%, run /tongs now', color: 'error', compact: true },
-    { size: 366999, text: 'chat 367k / msg · auto-compact at 367k · 99%, run /tongs now', color: 'error', compact: true },
-    { size: 367000, text: 'chat 367k / msg · auto-compact at 367k · 100%, do you want to compact?', color: 'error', compact: true },
+    { size: 256899, text: 'chat 257k / msg · auto-compact at 367k', warm: 69, compact: false },
+    { size: 256900, text: 'chat 257k / msg · auto-compact at 367k · 70%, map it soon with /tongs', warm: 70, compact: true },
+    { size: 311949, text: 'chat 312k / msg · auto-compact at 367k · 84%, map it soon with /tongs', warm: 84, compact: true },
+    { size: 311950, text: 'chat 312k / msg · auto-compact at 367k · 85%, run /tongs now', warm: 85, compact: true },
+    { size: 366999, text: 'chat 367k / msg · auto-compact at 367k · 99%, run /tongs now', warm: 99, compact: true },
+    { size: 367000, text: 'chat 367k / msg · auto-compact at 367k · 100%, do you want to compact?', warm: 100, compact: true },
   ], n => { tokens = n })
 })
 
@@ -47,13 +54,13 @@ test('without the variable, config.json "limit" is used, with the same 70% and 8
   on('fs.read', ($, e) => ({ value: e.path === CONFIG ? '{"limit": 200000}' : '' }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens, window: 1000000 }, rateLimits: [] } }))
   await checkCases($, [
-    { size: 139999, text: 'chat 140k / msg · limit 200k', color: undefined, compact: false },
-    { size: 140000, text: 'chat 140k / msg · limit 200k · 70%, map it soon with /tongs', color: 'warning', compact: true },
-    { size: 169999, text: 'chat 170k / msg · limit 200k · 84%, map it soon with /tongs', color: 'warning', compact: true },
-    { size: 170000, text: 'chat 170k / msg · limit 200k · 85%, run /tongs now', color: 'error', compact: true },
-    { size: 199999, text: 'chat 200k / msg · limit 200k · 99%, run /tongs now', color: 'error', compact: true },
-    { size: 200000, text: 'chat 200k / msg · limit 200k · 100%, do you want to compact?', color: 'error', compact: true },
-    { size: 250000, text: 'chat 250k / msg · limit 200k · 125%, do you want to compact?', color: 'error', compact: true },
+    { size: 139999, text: 'chat 140k / msg · limit 200k', warm: 69, compact: false },
+    { size: 140000, text: 'chat 140k / msg · limit 200k · 70%, map it soon with /tongs', warm: 70, compact: true },
+    { size: 169999, text: 'chat 170k / msg · limit 200k · 84%, map it soon with /tongs', warm: 84, compact: true },
+    { size: 170000, text: 'chat 170k / msg · limit 200k · 85%, run /tongs now', warm: 85, compact: true },
+    { size: 199999, text: 'chat 200k / msg · limit 200k · 99%, run /tongs now', warm: 99, compact: true },
+    { size: 200000, text: 'chat 200k / msg · limit 200k · 100%, do you want to compact?', warm: 100, compact: true },
+    { size: 250000, text: 'chat 250k / msg · limit 200k · 125%, do you want to compact?', warm: 125, compact: true },
   ], n => { tokens = n })
 })
 
