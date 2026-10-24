@@ -298,11 +298,11 @@ test('after Compact the band turns green and starts the size at the old number, 
 // The draft is typed from an empty box each time, as prompt.edit raises it.
 const draft = ($: any, text: string) =>
   $.prompt.edit({ origin: { kind: 'composer' }, text: '', cursor: 0, start: 0, end: 0, inputText: text })
-async function switchSetup(on: any, model: { now: string }, runs: string[], hasEffort = true, modelWorks = true) {
+async function switchSetup(on: any, model: { now: string }, runs: string[], hasEffort = true, modelWorks = true, tokens = 100000) {
   on('ui.render', ($: any, e: any) => { const { Box } = $.ui.resolve(e); return <Box /> })
   mock.env(on, { HOME })
   on('fs.read', () => ({ value: '{"limit": 400000}' }))
-  on('session.usage', usageAt(100000))
+  on('session.usage', usageAt(tokens))
   on('session.model', () => ({ value: model.now }))
   on('prompt.submit', ($: any, e: any) => ({ text: e.text }))
   // what the engine does with an edit: splice the typed text into the box
@@ -431,4 +431,37 @@ test('stage switch: no button while Claude is replying, and it is back when the 
   expect(await switchLabel($)).toBeUndefined() // a reply is running
   await $.turn.complete(turn('done'))
   expect(await switchLabel($)).toBe('Switch to opus 5.5 medium')
+})
+
+test('stage switch: in a big chat it warns the switch re-reads everything and offers Compact, then switch', async ($, on) => {
+  const model = { now: 'claude-sonnet-5-5' }, runs: string[] = [], order: string[] = []
+  await switchSetup(on, model, runs, true, true, 150000)
+  on('session.compact', () => { order.push('compact'); return { messages: [{ role: 'user', text: 'hi', toolUses: [] }], tokensBefore: 150000, tokensAfter: 20000 } })
+  on('ui.toast', ($: any, e: any) => { void e; return {} })
+  await draft($, 'implement part two')
+  const ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
+  expect((await ui.find({ key: 'switch' }))?.props.label).toBe('Switch to opus 5.5 medium (re-reads 150k uncached)')
+  expect((await ui.find({ key: 'switch-compact' }))?.props.label).toBe('Compact, then switch to opus 5.5 medium')
+  await ui.press({ key: 'switch-compact' })
+  await new Promise(r => setTimeout(r, 100)) // the press starts the compact and the switch; let them finish
+  await ui.unmount()
+  expect(order).toEqual(['compact'])
+  expect(runs).toEqual(['/model claude-opus-5-5']) // compacted first, then switched
+})
+
+test('stage switch: if the compact does not finish, the switch is cancelled and the band says so', async ($, on) => {
+  const model = { now: 'claude-sonnet-5-5' }, runs: string[] = []
+  await switchSetup(on, model, runs, true, true, 150000)
+  on('session.compact', () => ({ skip: 'nothing to compact yet' }))
+  on('ui.toast', ($: any, e: any) => { void e; return {} })
+  await draft($, 'implement part two')
+  let ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
+  await ui.press({ key: 'switch-compact' })
+  await ui.unmount()
+  await new Promise(r => setTimeout(r, 100))
+  expect(runs).toEqual([]) // never switched
+  ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
+  const t = await ui.find({ type: 'Text', text: /cancelled/ })
+  await ui.unmount()
+  expect(t?.text).toContain('the switch to opus 5.5 was cancelled')
 })

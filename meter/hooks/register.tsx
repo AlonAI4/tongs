@@ -155,8 +155,9 @@ async function switchTo($: EngineInterface, s: Stage) {
 
 let tongsRan = false // /tongs ran this turn: its /compact line, if any, is run when the turn ends
 
-async function compact($: EngineInterface, given?: string) {
+async function compact($: EngineInterface, given?: string): Promise<boolean> {
   const instructions = given ?? await focus($)
+  let ok = false
   try {
     const r = await $.session.compact({ instructions })
     if (r.skip !== undefined) $.ui.toast(`Compact skipped: ${r.skip}`)
@@ -164,6 +165,7 @@ async function compact($: EngineInterface, given?: string) {
       const sizes = r.tokensBefore && r.tokensAfter ? ' ' + k(r.tokensBefore) + ' -> ' + k(r.tokensAfter) + '.' : ''
       $.ui.toast(`Compacted.${sizes} The meter updates after your next message.`)
       celebrate($, r.tokensBefore, r.tokensAfter)
+      ok = true
     }
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e)
@@ -174,15 +176,35 @@ async function compact($: EngineInterface, given?: string) {
         await $.command.run({ command: 'compact', args: instructions })
         $.ui.toast('Compacting... The meter updates after your next message.')
         celebrate($)
-        return
+        ok = true
       } catch (e2) {
         $.ui.toast(`Could not compact: ${e2 instanceof Error ? e2.message : String(e2)}`)
-        return
       }
-    }
-    $.ui.toast(`Could not compact: ${reason}. If Claude is still replying, wait until it has finished.`)
+    } else $.ui.toast(`Could not compact: ${reason}. If Claude is still replying, wait until it has finished.`)
   }
   $.ui.invalidate('ui.render')
+  return ok
+}
+
+// From this size a plain switch makes the next message re-read the whole chat with no cache hit
+// (each model has its own cache), so the band offers "Compact, then switch". The 87k an empty
+// chat already holds is fixed cost; this is a first guess until the 7.1 measurement fixes it.
+const SWITCH_COMPACT_AT = 120000
+let pendingSwitch: Stage | undefined // compacting ran as a reply: switch when it ends
+
+async function compactThenSwitch($: EngineInterface, s: Stage) {
+  if (busy) { failed = 'Claude is still replying. Switch when it has finished.'; $.ui.toast(failed); $.ui.invalidate('ui.render'); return }
+  failed = undefined
+  switchDone = true
+  $.ui.invalidate('ui.render')
+  if (!await compact($)) {
+    switchDone = false
+    failed = `Compact did not finish, so the switch to ${s.label} was cancelled.`
+    $.ui.invalidate('ui.render')
+    return
+  }
+  if (busy) { pendingSwitch = s; return } // the compact is still running as a reply
+  await switchTo($, s)
 }
 
 export const register: Register = on => {
@@ -236,7 +258,11 @@ export const register: Register = on => {
   on('skill.prompt', { skill: 'tongs' }, ($, e, next) => { tongsRan = true; return next(e) })
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
-    if (e.agentId === undefined) { busy = false; $.ui.invalidate('ui.render') }
+    if (e.agentId === undefined) {
+      busy = false; $.ui.invalidate('ui.render')
+      if (pendingSwitch && !e.isAborted) { const p = pendingSwitch; pendingSwitch = undefined; void switchTo($, p) }
+      else pendingSwitch = undefined
+    }
     if (e.agentId === undefined && tongsRan) {
       tongsRan = false
       const line = /^\/compact[ \t]+(\S.*)$/m.exec(e.answer)
@@ -291,10 +317,14 @@ export const register: Register = on => {
         <Box justifyContent={offer || failed ? 'space-between' : 'flex-end'} gap={1}>
           {offer ? (
             <Box gap={1}>
-              <Button key="switch" label={`Switch to ${offer.label} ${offer.effort}`} onPress={() => switchTo($, offer)} />
+              {size !== undefined && size >= SWITCH_COMPACT_AT ? (
+                <Button key="switch-compact" label={`Compact, then switch to ${offer.label} ${offer.effort}`} onPress={() => compactThenSwitch($, offer)} />
+              ) : null}
+              <Button key="switch" label={`Switch to ${offer.label} ${offer.effort}${size !== undefined && size >= SWITCH_COMPACT_AT ? ` (re-reads ${k(size)} uncached)` : ''}`} onPress={() => switchTo($, offer)} />
               <Button key="switch-no" label="Not now" onPress={() => { switchDone = true; $.ui.invalidate('ui.render') }} />
             </Box>
-          ) : failed ? <Text color="#ff6b6b" bold>{failed}</Text> : null}
+          ) : null}
+          {failed ? <Text color="#ff6b6b" bold>{failed}</Text> : null}
           <Box gap={1}>
           {line}
           {isBig ? <Button key="compact" label="Compact" onPress={() => compact($)} /> : null}
