@@ -129,15 +129,16 @@ async function switchTo($: EngineInterface, s: Stage) {
   failed = undefined
   switchDone = true
   $.ui.invalidate('ui.render')
-  let now = ''
+  let now = '', said = ''
   try {
-    await $.command.run({ command: 'model', args: s.model })
+    const r = await $.command.run({ command: 'model', args: s.model })
+    said = String((r as { text?: string } | undefined)?.text ?? '').slice(0, 60)
     now = (await $.session.model()).toLowerCase()
   } catch {}
   // /model answers with text rather than failing, so check the model really changed
   if (!now.includes(s.family)) {
     switchDone = false
-    failed = `Could not switch to ${s.label}. Type /model ${s.model}`
+    failed = `Could not switch to ${s.label} (model reads "${now || 'unknown'}"${said ? ', /model said "' + said + '"' : ''}). Type /model ${s.model}`
     $.ui.invalidate('ui.render')
     $.ui.toast(failed)
     return

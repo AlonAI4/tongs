@@ -386,7 +386,7 @@ test('stage switch: the offer lasts one message, and a /model that did not chang
   const ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
   await ui.press({ key: 'switch' })
   await ui.unmount()
-  expect(toasts.at(-1)).toBe('Could not switch to opus 5.5. Type /model claude-opus-5-5')
+  expect(toasts.at(-1)).toBe('Could not switch to opus 5.5 (model reads "claude-sonnet-5-5", /model said "Unknown model"). Type /model claude-opus-5-5')
   expect(await switchLabel($)).toBe('Switch to opus 5.5 medium') // back, since it did not work
   await draft($, 'thanks')
   expect(await switchLabel($)).toBeUndefined()
