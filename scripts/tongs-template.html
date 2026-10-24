@@ -9,7 +9,7 @@
 <style>
 /*__FONTS__*/
 :root{
-  color-scheme:dark; --bg:#0f0f1a; --panel:#151524; --line:#2a2a40; --ink:#e6e6f0; --dim:#a3a6b8; --active:#ff8a2a;
+  color-scheme:dark; --bg:#0d1117; --panel:#131920; --line:#263040; --ink:#e6edf3; --dim:#9aa7b4; --active:#ff8a1f;
   --f-display:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
   --f-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
   --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
@@ -22,7 +22,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);fo
 .stage{position:relative;min-width:0}
 canvas{display:block;width:100%;height:100%;cursor:grab;touch-action:none}
 canvas.drag{cursor:grabbing}
-.status{position:absolute;left:14px;bottom:12px;font:400 .78rem var(--f-mono);color:var(--dim);pointer-events:none;background:rgba(15,15,26,.8);padding:2px 6px;border-radius:4px}
+.status{position:absolute;left:14px;bottom:12px;font:400 .78rem var(--f-mono);color:var(--dim);pointer-events:none;background:rgba(13,17,23,.8);padding:2px 6px;border-radius:4px}
 .panel{background:var(--panel);border-left:1px solid var(--line);padding:16px;overflow:auto;display:flex;flex-direction:column;gap:12px}
 .head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 h1{font:700 1.7rem/1 var(--f-display);letter-spacing:.03em;text-transform:uppercase;margin:0}
@@ -81,7 +81,7 @@ button[disabled]{opacity:.5;cursor:default}
       <h2>Key</h2>
       <div class="key"><span class="dot" style="background:var(--active);box-shadow:0 0 6px var(--active)"></span>active agent (wrote in the last 15 minutes)</div>
       <div class="key"><span class="dot" id="idleDot"></span>idle agent</div>
-      <div class="key"><svg width="22" height="10" aria-hidden="true"><line x1="0" y1="5" x2="22" y2="5" stroke="#a3a6b8" stroke-dasharray="4 3"/></svg>inferred: two projects touched the same file</div>
+      <div class="key"><svg width="22" height="10" aria-hidden="true"><line x1="0" y1="5" x2="22" y2="5" stroke="#9aa7b4" stroke-dasharray="4 3"/></svg>inferred: two projects touched the same file</div>
       <div class="key">Zoom in: project parts, then links, then agents.</div>
     </div>
     <div>
@@ -118,7 +118,7 @@ const colorOf = n => n.k === "agent" ? (n.act ? C.active : C.idle) : n.k === "hu
 // ---------------------------------------------------------------- glow sprite (made once, never per-frame blur)
 const glow = document.createElement("canvas");
 (() => { glow.width = glow.height = 64; const g = glow.getContext("2d"), r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  r.addColorStop(0, "rgba(255,138,42,.85)"); r.addColorStop(.35, "rgba(255,138,42,.35)"); r.addColorStop(1, "rgba(255,138,42,0)");
+  r.addColorStop(0, "rgba(255,138,31,.95)"); r.addColorStop(.35, "rgba(255,138,31,.5)"); r.addColorStop(1, "rgba(255,138,31,0)");
   g.fillStyle = r; g.fillRect(0, 0, 64, 64); })();
 
 // ---------------------------------------------------------------- drawing
@@ -155,7 +155,7 @@ function grid() {
   const cx = sx(0), cy = sy(0), far = Math.hypot(W, H) * 0.75;
   for (const major of [false, true]) {
     const s = major ? step * 5 : step;
-    ctx.strokeStyle = major ? "rgba(230,230,240,.065)" : "rgba(230,230,240,.035)";
+    ctx.strokeStyle = major ? "rgba(230,237,243,.065)" : "rgba(230,237,243,.035)";
     ctx.lineWidth = 1; ctx.beginPath();
     for (let x = Math.floor(-view.x / z / s) * s; x * z + view.x < W; x += s) { const X = Math.round(x * z + view.x) + .5; ctx.moveTo(X, 0); ctx.lineTo(X, H); }
     for (let y = Math.floor(-view.y / z / s) * s; y * z + view.y < H; y += s) { const Y = Math.round(y * z + view.y) + .5; ctx.moveTo(0, Y); ctx.lineTo(W, Y); }
@@ -164,7 +164,7 @@ function grid() {
   }
   // fade the grid out away from the hub
   const f = ctx.createRadialGradient(cx, cy, Math.min(W, H) * 0.25, cx, cy, far);
-  f.addColorStop(0, "rgba(15,15,26,0)"); f.addColorStop(1, "rgba(15,15,26,.92)");
+  f.addColorStop(0, "rgba(13,17,23,0)"); f.addColorStop(1, "rgba(13,17,23,.92)");
   ctx.fillStyle = f; ctx.fillRect(0, 0, W, H);
 }
 
@@ -186,7 +186,7 @@ function draw(t) {
     let alpha, x1, y1, x2, y2;
     if (kind === "ring") {
       const d = Math.hypot(a.x, a.y) || 1;
-      alpha = 0.45; x1 = a.x; y1 = a.y; x2 = a.x / d * G.ring; y2 = a.y / d * G.ring;
+      alpha = 0.3; x1 = a.x; y1 = a.y; x2 = a.x / d * G.ring; y2 = a.y / d * G.ring;
     } else {
       alpha = la * Math.min(P[e[0]][2], P[e[1]][2]) * (kind === "inferred" ? 0.5 : 0.55);
       x1 = P[e[0]][0]; y1 = P[e[0]][1]; x2 = P[e[1]][0]; y2 = P[e[1]][1];
@@ -208,7 +208,8 @@ function draw(t) {
     const X = sx(x), Y = sy(y), R = dotPx(n, z);
     if (!onScreen(X, Y, R + 20)) continue;
     ctx.globalAlpha = a;
-    if (n.act === 1) { glowing = true; const g = R * 5 + 8; ctx.globalAlpha = a * pulse; ctx.drawImage(glow, X - g, Y - g, g * 2, g * 2); ctx.globalAlpha = a; }
+    if (n.act === 1) { glowing = true; const g = R * 6 + 12; ctx.globalAlpha = a * pulse; ctx.drawImage(glow, X - g, Y - g, g * 2, g * 2); ctx.globalAlpha = a; }
+    else if (n.hot) { glowing = true; const g = R * 4 + 16; ctx.globalAlpha = a * pulse * 0.8; ctx.drawImage(glow, X - g, Y - g, g * 2, g * 2); ctx.globalAlpha = a; } // a project with active agents
     ctx.fillStyle = colorOf(n); ctx.beginPath(); ctx.arc(X, Y, R, 0, 2 * Math.PI); ctx.fill();
     if (n.act) { ctx.lineWidth = 2; ctx.strokeStyle = "#ffd2ad"; ctx.stroke(); }
     if (n.k === "project" || n.k === "hub") { ctx.lineWidth = 1.5; ctx.strokeStyle = C.bg; ctx.stroke(); }

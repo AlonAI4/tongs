@@ -46,9 +46,10 @@ const IGNORED = ["~/.claude/", "~/ai-tracker/"]; // shared by every chat, so the
 // ---------------------------------------------------------------- colours
 // One background, one saturation, a hue per project (lightness steps after 8 projects).
 // Orange is never a project colour: it means active only. Every colour is checked for contrast.
-export const COLORS = { bg: "#0f0f1a", text: "#e6e6f0", dim: "#a3a6b8", active: "#ff8a2a", idle: "#8b8f9c", other: "#9a9fae", hub: "#e6e6f0", ring: "#6f7390" };
-const HUES = [205, 150, 265, 330, 180, 95, 235, 300];
-const TIERS = [64, 76, 54];
+// Graphite ground, blues and teals for projects, a single warm orange for activity. No purple, pink or gradients.
+export const COLORS = { bg: "#0d1117", text: "#e6edf3", dim: "#9aa7b4", active: "#ff8a1f", idle: "#8794a3", other: "#94a3b8", hub: "#e6edf3", ring: "#5b6b7d" };
+const HUES = [210, 178, 195, 222, 160, 202, 185, 170];
+const TIERS = [60, 72, 50];
 
 const hex = v => Math.round(v * 255).toString(16).padStart(2, "0");
 function hsl(h, s, l) {
@@ -65,8 +66,8 @@ export function contrast(a, b) {
   return (x + 0.05) / (y + 0.05);
 }
 export function projectColor(i) {
-  let l = TIERS[Math.floor(i / HUES.length) % TIERS.length], c = hsl(HUES[i % HUES.length], 60, l);
-  while (contrast(c, COLORS.bg) < 3.2 && l < 90) c = hsl(HUES[i % HUES.length], 60, l += 2);
+  let l = TIERS[Math.floor(i / HUES.length) % TIERS.length], c = hsl(HUES[i % HUES.length], 68, l);
+  while (contrast(c, COLORS.bg) < 3.2 && l < 90) c = hsl(HUES[i % HUES.length], 68, l += 2);
   return c;
 }
 
@@ -141,7 +142,7 @@ export function indexLines(maps, mapsDir) {
 const key = s => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 const GOLD = Math.PI * (3 - Math.sqrt(5));
 const round = v => Math.round(v * 10) / 10;
-export const RING = 70;
+export const RING = 48;
 
 // Repulsion between circles {x, y, f} plus a pull toward each one's own start, for a fixed number of
 // passes; then exact separation, so nothing overlaps whatever the input.
@@ -280,7 +281,7 @@ export function buildMap({ tracker, maps = [], agents = [], mapsDir = "~/.claude
 
   // projects: a golden-angle spiral outside the ring, relaxed so footprints never overlap
   list.forEach((p, i) => {
-    const a = i * GOLD - Math.PI / 2, rr = RING + 70 + p.f + 110 * Math.sqrt(i);
+    const a = i * GOLD - Math.PI / 2, rr = RING + 90 + p.f + 105 * Math.sqrt(i);
     p.x = p.sx = rr * Math.cos(a); p.y = p.sy = rr * Math.sin(a);
   });
   relax(list, { passes: 300, gap: 46, pull: 0.02, keepOut: p => {
@@ -293,7 +294,7 @@ export function buildMap({ tracker, maps = [], agents = [], mapsDir = "~/.claude
 
   // flatten: hub, ring, projects, then each project's kids in absolute positions
   const nodes = [
-    { id: "hub", k: "hub", label: "the tracker", x: 0, y: 0, r: 14, st: 0,
+    { id: "hub", k: "hub", label: "the tracker", x: 0, y: 0, r: 10, st: 0,
       detail: `${projects.length} projects on the tracker` + (tracker.projects.some(p => p.updated) ? `, newest update ${tracker.projects.map(p => p.updated).filter(Boolean).sort().pop()}.` : ".") },
     { id: "ring", k: "ring", label: "group chat", x: 0, y: -RING, r: 0, st: 0,
       detail: "The group chat: the board where your chats leave messages for each other. " + (tracker.board ? `It last changed ${tracker.board.replace("T", " ")} UTC.` : "No board found.") },
@@ -302,7 +303,8 @@ export function buildMap({ tracker, maps = [], agents = [], mapsDir = "~/.claude
     .map(e => `${list.find(q => q.id === (e[0] === p.id ? e[1] : e[0])).label} (${e[3].n} file${e[3].n === 1 ? "" : "s"})`);
   list.forEach((p, i) => {
     const parts = p.kids.filter(c => c.k === "part").length, ags = p.kids.length - parts, sw = sharedWith(p);
-    nodes.push({ id: p.id, k: "project", label: p.label, x: round(p.x), y: round(p.y), r: round(p.r), st: 0, c: i,
+    const hot = p.kids.filter(c => c.act).length; // active agents here: the dot glows orange
+    nodes.push({ id: p.id, k: "project", label: p.label, x: round(p.x), y: round(p.y), r: round(p.r), st: 0, c: i, ...(hot ? { hot } : {}),
       detail: p === other ? `Chats and maps from folders that are not on the tracker. ${parts} map nodes, ${ags} agents shown.` :
         `Project${p.src.locked ? " (locked on the tracker)" : ""}. ${parts} map nodes, ${ags} agents shown` + (p.more ? `, ${p.more} more not shown` : "") + "." +
         (p.src.updated ? ` Tracker updated ${p.src.updated}.` : "") + (sw.length ? ` Shares files with ${sw.join(", ")} (inferred).` : "") });

@@ -179,6 +179,9 @@ test("active: the newest agents glow, at most 30; orange is never a project colo
     const c = projectColor(i), h = /^#(..)(..)(..)$/.exec(c).slice(1).map(x => parseInt(x, 16));
     assert.ok(contrast(c, COLORS.bg) >= 3, c + " contrast");
     assert.ok(!(h[0] > 200 && h[1] > 90 && h[1] < 180 && h[2] < 90), c + " looks orange");
+    const [r, g, b] = h, mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    const hue = mx === mn ? 0 : mx === r ? (60 * ((g - b) / (mx - mn)) + 360) % 360 : mx === g ? 60 * ((b - r) / (mx - mn)) + 120 : 60 * ((r - g) / (mx - mn)) + 240;
+    assert.ok(hue >= 140 && hue <= 235, c + " is not blue or teal (no purple, pink, green or warm hues)");
   }
   assert.ok(contrast(COLORS.text, COLORS.bg) >= 4.5);
   assert.ok(contrast(COLORS.dim, COLORS.bg) >= 4.5);
