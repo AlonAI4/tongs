@@ -127,3 +127,22 @@ test("fmt rounds up cleanly", () => {
   assert.equal(fmt(999499), "999k");
   assert.equal(fmt(999500), "1.0M");
 });
+
+test("the cache gives the same agents as an uncached run, reuses unchanged files and re-reads changed ones", async () => {
+  const home = newHome(), cwd = home + "/forge", cache = join(home, ".claude", "tongs-maps", ".cache.json");
+  const dup = line({ id: "m1", inp: 100, cwd, tools: [{ input: { file_path: cwd + "/a.js" } }] });
+  write(home, "-p/s1.jsonl", [dup, '{"type":"assistant", broken', line({ id: "m2", cwd })]);
+  write(home, "-p/s1/subagents/agent-a.jsonl", [dup, line({ id: "m3", model: "claude-haiku-4-5", cwd })]);
+  const plain = await read(home);
+  const first = await readLogs(logsOf(home), { home, cache }), second = await readLogs(logsOf(home), { home, cache });
+  const same = r => JSON.stringify({ ...r, cached: 0, agents: r.agents.map(a => ({ ...a, models: [...a.models], folders: [...a.folders], paths: [...a.paths] })) });
+  assert.equal(same(first), same(plain));
+  assert.equal(same(second), same(plain));
+  assert.deepEqual([first.cached, second.cached], [0, 2]);
+  write(home, "-p/s1.jsonl", [dup, line({ id: "m4", inp: 7000, cwd })]); // changed size: read again
+  const third = await readLogs(logsOf(home), { home, cache });
+  assert.equal(third.cached, 1);
+  assert.equal(same(third), same(await read(home)));
+  // a cache made for another home folder is not used
+  assert.equal((await readLogs(logsOf(home), { home: home + "x", cache })).cached, 0);
+});

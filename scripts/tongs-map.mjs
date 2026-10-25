@@ -12,7 +12,9 @@
 // Reads  ~/ai-tracker/projects (index.json and each project's "meta" only; never writes there),
 //        ~/ai-tracker/chat-maps/GROUP-CHAT.md (when it last changed, never its text),
 //        the chat maps in ~/.claude/tongs-maps (the data inside each page, never its script),
-//        the logs in ~/.claude/projects through agent-graph.mjs (files changed in the last --days, 14).
+//        the logs in ~/.claude/projects through agent-graph.mjs (files changed in the last --days, 7).
+//        What each log file gave is kept in ~/.claude/tongs-maps/.cache.json, so a file that has not
+//        changed (same mtime and size) is not read again.
 // Writes ~/.claude/tongs-maps/tongs.html (or --out) and index.md next to it: one line per chat map,
 //        for Claude to grep when a chat is lost. Then opens the page.
 //
@@ -411,13 +413,13 @@ async function main() {
   const logs = resolve(opt("--logs") || join(home, ".claude", "projects"));
   const pub = args.includes("--public");
   const out = resolve(opt("--out") || join(home, ".claude", "tongs-maps", pub ? "tongs-public.html" : "tongs.html"));
-  const days = Number(opt("--days") || 14);
+  const days = Number(opt("--days") || 7);
   if (!(days > 0)) { console.error("tongs-map: --days must be a number above 0"); process.exit(1); }
 
   const tracker = readTracker(trackerDir);
   if (!tracker.projects.length) { console.error("tongs-map: no projects found in " + tilde(join(trackerDir, "projects", "index.json"), home) + ". Use --tracker <folder>."); process.exit(1); }
   const { maps, problems } = readMaps(mapsDir);
-  const { agents, problems: bad } = existsSync(logs) ? await readLogs(logs, { days, home }) : { agents: [], problems: [] };
+  const { agents, problems: bad } = existsSync(logs) ? await readLogs(logs, { days, home, cache: join(home, ".claude", "tongs-maps", ".cache.json") }) : { agents: [], problems: [] };
   const graph = buildMap({ tracker, maps, agents, mapsDir: tilde(mapsDir, home), pub });
   for (const p of problems) console.warn("tongs-map: " + p);
   if (bad.length) console.warn(`tongs-map: skipped ${bad.length} bad log lines`);

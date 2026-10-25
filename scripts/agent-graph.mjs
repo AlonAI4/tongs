@@ -2,6 +2,9 @@
 // used by tongs-map.mjs, which draws them; it has no page of its own any more.
 //
 // Reads  ~/.claude/projects/**/*.jsonl (or another folder), only files changed in the last `days` (default 14).
+// cache  optional JSON file (tongs-map.mjs uses ~/.claude/tongs-maps/.cache.json): each file's result,
+//        reused while its mtime and size are the same. Messages are still counted once across files on
+//        every run, in the same order, so a cached run gives the same agents as an uncached one.
 //
 // What it reads, per agent (one chat or subagent log file)
 //   project  a folder under your home folder (cwd of the log lines); "tools/x" counts as x.
@@ -13,13 +16,14 @@
 //   first, last  the minutes it first and last wrote, from the logs (never the clock).
 // Never message text, prompts or session ids. Zero dependencies, works offline.
 
-import { readdirSync, statSync, createReadStream } from "node:fs";
+import { readdirSync, statSync, createReadStream, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join, relative, sep, basename } from "node:path";
+import { join, relative, sep, basename, dirname } from "node:path";
 import { homedir } from "node:os";
 
 const CONTAINERS = new Set(["tools", "projects", "code", "dev", "src", "repos", "work"]);
 const PATH_KEYS = ["file_path", "path", "notebook_path"];
+const CACHE_V = 1; // bump when readFile changes what it keeps
 
 // Split on "\n" only: readline also splits on U+2028/U+2029, which appear inside JSON strings in real logs.
 async function* linesOf(file) {
@@ -79,75 +83,104 @@ export function modelName(m) {
   return x ? `${x[1]} ${x[2].replace("-", ".")}` : "other";
 }
 
-export async function readLogs(logsDir, { days = 14, home = homedir() } = {}) {
+// One log file, read once: what it says, before messages are counted across files. This is what the
+// cache keeps, so a file that has not changed is never read again.
+async function readFile(file, home) {
+  const r = { project: null, cwdFolder: null, first: null, last: null, folders: {}, paths: [], usage: [], bad: [], lines: 0 };
+  const tools = new Set(), paths = new Set();
+  for await (const line of linesOf(file)) {
+    r.lines++;
+    if (!line.includes('"assistant"')) continue;
+    let d;
+    try { d = JSON.parse(line); } catch { r.bad.push(r.lines); continue; }
+    const m = d && d.message;
+    if (!m || m.role !== "assistant") continue;
+    if (!r.project && typeof d.cwd === "string") {
+      const p = projectOf(d.cwd, home);
+      r.project = p.name;
+      // the folder inside the project the chat was started in, for agents that never touch a file path
+      const rel = p.root ? relative(p.root, d.cwd).split(sep)[0] : "";
+      if (rel && rel !== ".." && !rel.startsWith(".")) r.cwdFolder = rel;
+    }
+    // times come from the logs (minute precision), never the clock, so the page stays deterministic
+    if (typeof d.timestamp === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(d.timestamp)) {
+      const t = d.timestamp.slice(0, 16);
+      if (!r.first || t < r.first) r.first = t;
+      if (!r.last || t > r.last) r.last = t;
+    }
+    for (const b of Array.isArray(m.content) ? m.content : []) {
+      if (!b || b.type !== "tool_use" || !b.input || tools.has(b.id)) continue;
+      tools.add(b.id);
+      const path = PATH_KEYS.map(k => b.input[k]).find(v => typeof v === "string");
+      if (path) {
+        const w = placeOf(path, r.project || "other", home);
+        const f = w.project + "\t" + w.folder;
+        r.folders[f] = (r.folders[f] || 0) + 1;
+        if (path.startsWith(home + sep)) paths.add("~/" + relative(home, path).split(sep).join("/"));
+      }
+    }
+    const u = m.usage;
+    if (!u) continue;
+    // [message id + request id or null, fresh, cached, model]: counted later, once across all files
+    r.usage.push([m.id ? `${m.id}|${d.requestId}` : null, (u.input_tokens || 0) + (u.output_tokens || 0),
+      (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0), modelName(m.model)]);
+  }
+  r.paths = [...paths];
+  return r;
+}
+
+// cache: a JSON file of readFile results keyed by path, kept only while mtime and size match.
+function loadCache(path, home) {
+  if (!path) return new Map();
+  try {
+    const c = JSON.parse(readFileSync(path, "utf8"));
+    if (c && c.v === CACHE_V && c.home === home && c.files && typeof c.files === "object") return new Map(Object.entries(c.files));
+  } catch {}
+  return new Map();
+}
+
+export async function readLogs(logsDir, { days = 14, home = homedir(), cache = null } = {}) {
   const cutoff = Date.now() - days * 86400000;
   // Oldest file first, so a resumed chat that replays an older chat's messages cannot take them from it.
-  const mtime = f => { try { return statSync(f).mtimeMs; } catch { return -Infinity; } }; // deleted since the walk: skipped
-  const files = walk(logsDir).map(f => [f, mtime(f)]).filter(([, t]) => t >= cutoff)
-    .sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1)).map(([f]) => f);
+  const stat = f => { try { const s = statSync(f); return [s.mtimeMs, s.size]; } catch { return [-Infinity, 0]; } }; // deleted since the walk: skipped
+  const files = walk(logsDir).map(f => [f, ...stat(f)]).filter(([, t]) => t >= cutoff)
+    .sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1));
+  const old = loadCache(cache, home), kept = {};
   const seen = new Set();            // message.id + requestId, global
   const agents = new Map();          // key -> agent
   const problems = [];
-  let lines = 0;
+  let lines = 0, hits = 0;
 
-  for (const file of files) {
+  for (const [file, mt, size] of files) {
     const rel = relative(logsDir, file).split(sep);
     const sub = rel.length >= 3 && rel[rel.length - 2] === "subagents";
     const session = sub ? rel[rel.length - 3] : basename(file, ".jsonl");
     const key = rel.join("/");
+    const c = old.get(file);
+    const r = c && c.mtime === mt && c.size === size ? (hits++, c.r) : await readFile(file, home);
+    kept[file] = { mtime: mt, size, r };
     const agent = {
       id: "a" + hash(key), parentKey: null,
-      sub, project: null, cwdFolder: null, first: null, last: null, fresh: 0, cached: 0, models: new Map(), folders: new Map(), paths: new Set(), tools: new Set(),
+      sub, project: r.project, cwdFolder: r.cwdFolder, first: r.first, last: r.last, fresh: 0, cached: 0, models: new Map(),
+      folders: new Map(Object.entries(r.folders)), paths: new Set(r.paths),
     };
     // a subagent's parent chat file sits next to its folder: <proj>/<session>.jsonl
     if (sub) agent.parentKey = "a" + hash(rel.slice(0, -3).concat(session + ".jsonl").join("/"));
     agents.set(agent.id, agent);
-
-    let n = 0;
-    for await (const line of linesOf(file)) {
-      n++; lines++;
-      if (!line.includes('"assistant"')) continue;
-      let d;
-      try { d = JSON.parse(line); } catch { problems.push(`${key}:${n}`); continue; }
-      const m = d && d.message;
-      if (!m || m.role !== "assistant") continue;
-      if (!agent.project && typeof d.cwd === "string") {
-        const p = projectOf(d.cwd, home);
-        agent.project = p.name;
-        // the folder inside the project the chat was started in, for agents that never touch a file path
-        const rel = p.root ? relative(p.root, d.cwd).split(sep)[0] : "";
-        if (rel && rel !== ".." && !rel.startsWith(".")) agent.cwdFolder = rel;
-      }
-      // times come from the logs (minute precision), never the clock, so the page stays deterministic
-      if (typeof d.timestamp === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(d.timestamp)) {
-        const t = d.timestamp.slice(0, 16);
-        if (!agent.first || t < agent.first) agent.first = t;
-        if (!agent.last || t > agent.last) agent.last = t;
-      }
-      for (const b of Array.isArray(m.content) ? m.content : []) {
-        if (!b || b.type !== "tool_use" || !b.input || agent.tools.has(b.id)) continue;
-        agent.tools.add(b.id);
-        const path = PATH_KEYS.map(k => b.input[k]).find(v => typeof v === "string");
-        if (path) {
-          const w = placeOf(path, agent.project || "other", home);
-          const f = w.project + "\t" + w.folder;
-          agent.folders.set(f, (agent.folders.get(f) || 0) + 1);
-          if (path.startsWith(home + sep)) agent.paths.add("~/" + relative(home, path).split(sep).join("/"));
-        }
-      }
-      const u = m.usage;
-      if (!u) continue;
-      const id = `${m.id}|${d.requestId}`;
-      if (m.id && seen.has(id)) continue;
-      if (m.id) seen.add(id);
-      const fresh = (u.input_tokens || 0) + (u.output_tokens || 0);
+    lines += r.lines;
+    for (const n of r.bad) problems.push(`${key}:${n}`);
+    for (const [id, fresh, cached, name] of r.usage) {
+      if (id && seen.has(id)) continue;
+      if (id) seen.add(id);
       agent.fresh += fresh;
-      agent.cached += (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
-      const name = modelName(m.model);
+      agent.cached += cached;
       agent.models.set(name, (agent.models.get(name) || 0) + fresh + 1);
     }
   }
-  return { agents: [...agents.values()].filter(a => a.fresh + a.cached > 0), problems, files: files.length, lines };
+  if (cache) {
+    try { mkdirSync(dirname(cache), { recursive: true }); writeFileSync(cache, JSON.stringify({ v: CACHE_V, home, files: kept })); } catch {} // a cache that cannot be written only costs speed
+  }
+  return { agents: [...agents.values()].filter(a => a.fresh + a.cached > 0), problems, files: files.length, lines, cached: hits };
 }
 
 export const ACTIVE_MIN = 15; // an agent is active when it wrote something this recently
