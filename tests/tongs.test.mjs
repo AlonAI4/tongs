@@ -8,7 +8,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSyn
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readTracker, readMaps, buildMap, renderPage, labelBox, stageAlpha, indexLines, resumePrompt, contrast, projectColor, COLORS, LIMITS } from "../scripts/tongs-map.mjs";
+import { readTracker, readMaps, buildMap, renderPage, labelBox, stageAlpha, indexLines, resumePrompt, contrast, projectColor, COLORS, TYPE_COLORS, LIMITS, RING } from "../scripts/tongs-map.mjs";
+import { parseTrackerMap } from "../scripts/tracker-map.mjs";
+import { FORGE, TONGS, GAME } from "./fixtures/tracker-maps.mjs";
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "tongs-map.mjs");
 const TEMPLATE = readFileSync(join(dirname(SCRIPT), "tongs-template.html"), "utf8");
@@ -50,7 +52,8 @@ function sample() {
     agent("a4", "somewhere-else", { paths: new Set(["~/tongs/scripts/a.mjs"]) }),
     agent("s1", null, { sub: true, parentKey: "a1" }),
   ];
-  return { tracker, maps, agents, now: NOW };
+  const trackerMaps = [parseTrackerMap(FORGE, "forge"), parseTrackerMap(TONGS, "tongs"), parseTrackerMap(GAME, "zenith-mc")];
+  return { tracker, maps, agents, trackerMaps, now: NOW };
 }
 
 test("reads the tracker's projects and meta, a locked one by id only, and the board's time but never its text", () => {
@@ -102,7 +105,7 @@ test("'other' folding: a map or log folder not on the tracker goes to 'other', n
   assert.equal(g.nodes.filter(x => x.p === other.id && x.k === "part").length, 3, "the scratch map");
   assert.equal(g.nodes.filter(x => x.p === other.id && x.k === "agent").length, 1, "the agent from somewhere-else");
   // a map with no project field joins the project its name matches
-  assert.equal(g.nodes.filter(x => x.p === "p:zenith-mc" && x.k === "part").length, 5);
+  assert.equal(g.nodes.filter(x => x.p === "p:zenith-mc" && x.id.startsWith("m:")).length, 5);
   // a subagent goes where its chat is
   assert.equal(g.nodes.find(x => x.id === "a:s1").p, "p:forge");
 });
@@ -233,7 +236,7 @@ test("public version: no chat map text, file names, resume prompts or 'other'; t
   assert.ok(!json.includes("SECRET-DECISION-TEXT") && !json.includes("Read ~/") && !json.includes("resume") && !json.includes("scripts/a.mjs"));
   assert.ok(!g.nodes.some(x => x.id === "p:~other" || x.p === "p:~other"), "nothing from folders off the tracker");
   assert.equal(g.public, true);
-  assert.deepEqual(g.nodes.filter(x => x.p === "p:forge" && x.k === "part").map(x => x.label).sort(), ["decision", "decision", "decision", "decision", "decision", "decision", "decision", "decision", "goal"].sort().map(x => (x === "decision" ? "done" : x)));
+  assert.deepEqual(g.nodes.filter(x => x.p === "p:forge" && x.id.startsWith("m:")).map(x => x.label).sort(), ["decision", "decision", "decision", "decision", "decision", "decision", "decision", "decision", "goal"].sort().map(x => (x === "decision" ? "done" : x)));
   assert.ok(g.nodes.some(x => x.k === "agent"), "agents (model and size only) are still shown");
   assert.equal(buildMap(sample()).public, false);
   assert.match(TEMPLATE, /byId\.get\("p:" \+ h\)/);
@@ -244,4 +247,63 @@ test("public version: no chat map text, file names, resume prompts or 'other'; t
   assert.match(r.stdout, /Public version/);
   assert.ok(!readFileSync(out, "utf8").includes('"public":false'));
   assert.equal(readdirSync(dirname(out)).join(), "index.html", "no index.md next to a public page");
+});
+
+test("tracker maps: their nodes join the parts stage of their project, each linked to it, with text, source, date and stale", () => {
+  const g = buildMap(sample()), T = g.nodes.filter(x => x.id.startsWith("t:"));
+  assert.ok(T.length > 20);
+  for (const x of T) {
+    assert.equal(x.k, "part"); assert.equal(x.st, 1);
+    assert.equal(x.p, "p:" + x.id.split(":")[1]);
+    assert.equal(x.src, "~/ai-tracker/maps/" + x.id.split(":")[1] + ".md");
+    assert.ok(x.text && x.date && x.label.length <= 50);
+    assert.ok(g.edges.some(e => g.nodes[e[0]] === x && g.nodes[e[1]].id === x.p && e[2] === "own"));
+  }
+  assert.ok(!T.some(x => x.t === "rule"), "rules are one shared node, not one per project");
+  assert.equal(g.nodes.find(x => x.id.startsWith("t:tongs:") && x.text.startsWith("Start a new chat")).stale, 1);
+  // agents stay deepest
+  assert.ok(g.nodes.filter(x => x.k === "agent").every(x => x.st === 3));
+  // links inside one map are solid "map" links with the reason; none crosses projects
+  const links = g.edges.filter(e => e[2] === "map" && g.nodes[e[0]].id.startsWith("t:"));
+  assert.ok(links.some(e => e[3].why === "phase 14"));
+  for (const e of links) assert.equal(g.nodes[e[0]].p, g.nodes[e[1]].p);
+  // every part has a colour for its type, and the colours pass contrast and are never the active orange
+  for (const [t, c] of Object.entries(TYPE_COLORS)) { assert.ok(contrast(c, COLORS.bg) >= 3, t); assert.notEqual(c, COLORS.active); }
+});
+
+test("one shared Rules node linked only to the hub, and tool dots that link the projects naming them", () => {
+  const g = buildMap(sample());
+  const rules = g.nodes.filter(x => x.t === "rule");
+  assert.equal(rules.length, 1);
+  const ri = g.nodes.indexOf(rules[0]), touching = g.edges.filter(e => e[0] === ri || e[1] === ri);
+  assert.deepEqual(touching.map(e => [g.nodes[e[0]].id, g.nodes[e[1]].id, e[2]]), [["rules", "hub", "own"]]);
+  const tools = g.nodes.filter(x => x.k === "tool").map(x => x.label);
+  assert.deepEqual(tools, ["Netlify", "Supabase"]);
+  const net = g.nodes.find(x => x.id === "tool:Netlify"), ni = g.nodes.indexOf(net);
+  assert.deepEqual(g.edges.filter(e => e[0] === ni).map(e => g.nodes[e[1]].id), ["p:forge", "p:zenith-mc"]);
+  assert.match(net.detail, /retired, stopped using it on 14 Oct 2026/);
+  // the Rules node and the tool dots sit inside the ring: they are not part of any project's footprint
+  for (const x of [...rules, ...g.nodes.filter(x => x.k === "tool")]) assert.ok(Math.hypot(x.x, x.y) < RING, x.id);
+  // and projects stay where they would be without them
+  const s = sample(), noRules = buildMap({ ...s, trackerMaps: s.trackerMaps.map(m => ({ ...m, nodes: m.nodes.filter(n => n.t !== "rule" && !/netlify|supabase/i.test(n.text)) })) });
+  const at = gr => gr.nodes.filter(x => x.k === "project").map(x => [x.id, x.x, x.y]);
+  assert.equal(at(noRules).length, at(g).length);
+});
+
+test("cap: at most 40 tracker nodes per project, ranked by links with the goal kept, and '+N more' in the detail", () => {
+  const extra = Array.from({ length: 60 }, (_, i) => `- 14.${20 + i} Another step that was done in phase fourteen`).join("\n");
+  const big = parseTrackerMap(FORGE.replace("Open questions:", extra + "\nOpen questions:"), "forge");
+  const g = buildMap({ ...sample(), trackerMaps: [big] });
+  const T = g.nodes.filter(x => x.id.startsWith("t:forge:"));
+  assert.equal(T.length, LIMITS.trackerPerProject);
+  assert.ok(T.some(x => x.t === "goal"), "the goal is always kept");
+  assert.ok(T.some(x => x.text.startsWith("Planned: 14")), "the most linked node is kept");
+  const more = big.nodes.filter(n => n.t !== "rule").length - LIMITS.trackerPerProject;
+  assert.match(g.nodes.find(x => x.id === "p:forge").detail, new RegExp("\\+" + more + " more tracker map nodes not shown"));
+});
+
+test("tracker nodes: the same inputs give the same bytes, and the resume line is exact", () => {
+  assert.equal(renderPage(buildMap(sample())), renderPage(buildMap(sample())));
+  const g = buildMap(sample()), x = g.nodes.find(n => n.id.startsWith("t:forge:decision-"));
+  assert.equal(x.resume, `Read ~/ai-tracker/maps/forge.md, then continue from node ${x.id.split(":")[2]}.`);
 });

@@ -35,10 +35,11 @@ import { homedir, platform } from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { readLogs, modelName, fmt, ACTIVE_MIN, minuteOf } from "./agent-graph.mjs";
+import { parseTrackerMap, trackerLinks, titleOf, toolsOf, RETIRED } from "./tracker-map.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const LIMITS = { agentsPerProject: 40, glow: 30, foldBelow: 100 };
+export const LIMITS = { agentsPerProject: 40, trackerPerProject: 40, glow: 30, foldBelow: 100 };
 const TYPES = ["goal", "decision", "file", "done", "now", "open", "gotcha", "rule"];
 const SKIP = new Set(["latest.html", "tongs.html", "agents.html", "super.html"]);
 const NAME = /^\w[\w.-]*\.html$/; // the names serve-maps.mjs serves: safe in a link
@@ -49,7 +50,10 @@ const IGNORED = ["~/.claude/", "~/ai-tracker/"]; // shared by every chat, so the
 // One background, one saturation, a hue per project (lightness steps after 8 projects).
 // Orange is never a project colour: it means active only. Every colour is checked for contrast.
 // Graphite ground, blues and teals for projects, a single warm orange for activity. No purple, pink or gradients.
-export const COLORS = { bg: "#0d1117", text: "#e6edf3", dim: "#9aa7b4", active: "#ff8a1f", idle: "#8794a3", other: "#94a3b8", hub: "#e6edf3", ring: "#5b6b7d" };
+export const COLORS = { bg: "#0d1117", text: "#e6edf3", dim: "#9aa7b4", active: "#ff8a1f", idle: "#8794a3", other: "#94a3b8", hub: "#e6edf3", ring: "#5b6b7d", tool: "#c9d1d9" };
+// A map node's colour says its section. Chat map types share the nearest one.
+export const TYPE_COLORS = { goal: "#f0f6fc", decision: "#6cb6ff", file: "#8b98a5", done: "#56d364", open: "#e3d26f", place: "#39c5cf",
+  now: "#56d364", gotcha: "#e3d26f", rule: "#8b98a5" };
 const HUES = [210, 178, 195, 222, 160, 202, 185, 170];
 const TIERS = [60, 72, 50];
 
@@ -128,6 +132,15 @@ export function readMaps(dir) {
   return { maps, problems };
 }
 
+// The tracker's map files, ~/ai-tracker/maps/<id>.md, sorted by id. Read only.
+export function readTrackerMaps(dir) {
+  let names = [];
+  try { names = readdirSync(dir).filter(f => /^[\w.-]+\.md$/.test(f)).sort(); } catch { return []; }
+  const out = [];
+  for (const f of names) { try { out.push(parseTrackerMap(readFileSync(join(dir, f), "utf8"), f.slice(0, -3))); } catch {} }
+  return out;
+}
+
 // "~/.claude/tongs-maps/x.json": never the absolute home path
 export const tilde = (p, home = homedir()) => (p === home ? "~" : p.startsWith(home + sep) ? "~/" + relative(home, p).split(sep).join("/") : p);
 export const resumePrompt = (path, id) => `Read ${path}, then continue from node ${id}.`;
@@ -177,7 +190,7 @@ function relax(list, { passes, gap, pull, springs = [], len = 0, keepOut = null 
 
 // pub: the version for a website. Chat map text, file names and resume prompts are left out (a part is
 // only its type), and nothing from folders that are not on the tracker is shown at all.
-export function buildMap({ tracker, maps = [], agents = [], mapsDir = "~/.claude/tongs-maps", now = Date.now(), pub = false }) {
+export function buildMap({ tracker, maps = [], agents = [], trackerMaps = [], trackerMapsDir = "~/ai-tracker/maps", mapsDir = "~/.claude/tongs-maps", now = Date.now(), pub = false }) {
   const projects = tracker.projects.map((p, i) => ({ id: "p:" + p.id, k: "project", label: p.title, src: p, color: projectColor(i), kids: [], more: 0 }));
   const lookup = new Map();
   for (const p of projects) for (const k of [key(p.src.id), key(p.src.title)]) if (k && !lookup.has(k)) lookup.set(k, p);
@@ -200,6 +213,30 @@ export function buildMap({ tracker, maps = [], agents = [], mapsDir = "~/.claude
     }
     edges.push([`m:${m.name}:${goal.id}`, p.id, "own"]);
     for (const l of m.links) edges.push([`m:${m.name}:${l.from}`, `m:${m.name}:${l.to}`, "map"]);
+  }
+
+  // tracker maps: each project's map file. Its nodes join the chat map nodes; links only inside one map.
+  const tLinks = trackerLinks(trackerMaps), tools = [];
+  let rules = null;
+  for (const m of trackerMaps) {
+    const p = projects.find(q => q.src.id === m.id);
+    if (!p) continue;
+    const src = `${trackerMapsDir}/${m.id}.md`;
+    if (!rules && m.nodes.some(n => n.t === "rule")) rules = { m, src, list: m.nodes.filter(n => n.t === "rule") };
+    for (const t of toolsOf(m)) (tools.find(x => x.name === t) || tools[tools.push({ name: t, ps: [] }) - 1]).ps.push(p);
+    const keep = m.nodes.filter(n => n.t !== "rule");
+    const mine = tLinks.filter(l => l[0] === m.id), count = new Map();
+    for (const l of mine) for (const id of [l[1], l[2]]) count.set(id, (count.get(id) || 0) + 1);
+    // the goal first, then by number of links, then in file order
+    const order = keep.map((n, i) => [n, i]).sort((a, b) => (b[0].t === "goal") - (a[0].t === "goal") || (count.get(b[0].id) || 0) - (count.get(a[0].id) || 0) || a[1] - b[1]);
+    const shown = order.slice(0, LIMITS.trackerPerProject).sort((a, b) => a[1] - b[1]).map(x => x[0]), ids = new Set(shown.map(n => n.id));
+    p.moreT = keep.length - shown.length;
+    for (const n of shown) {
+      const id = `t:${m.id}:${n.id}`;
+      p.kids.push({ id, k: "part", t: n.t, label: titleOf(n.text), text: n.text, date: n.date, ...(n.stale ? { stale: 1 } : {}), ...(pub ? {} : { src, resume: resumePrompt(src, n.id) }) });
+      edges.push([id, p.id, "own"]);
+    }
+    for (const l of mine) if (ids.has(l[1]) && ids.has(l[2])) edges.push([`t:${m.id}:${l[1]}`, `t:${m.id}:${l[2]}`, "map", { why: l[3] }]);
   }
 
   // agents: chats and the subagents they started, in their chat's project
@@ -301,6 +338,21 @@ export function buildMap({ tracker, maps = [], agents = [], mapsDir = "~/.claude
     { id: "ring", k: "ring", label: "group chat", x: 0, y: -RING, r: 0, st: 0,
       detail: "The group chat: the board where your chats leave messages for each other. " + (tracker.board ? `It last changed ${tracker.board.replace("T", " ")} UTC.` : "No board found.") },
   ];
+  // the shared Rules node and the tool dots sit inside the ring, so they never pull projects together
+  const inner = [...(rules ? ["rules"] : []), ...tools.map(t => "tool:" + t.name)];
+  const spot = id => { const a = -Math.PI / 2 + (inner.indexOf(id) + 0.5) * 2 * Math.PI / inner.length; return { x: round(RING * 0.62 * Math.cos(a)), y: round(RING * 0.62 * Math.sin(a)) }; };
+  if (rules) {
+    nodes.push({ id: "rules", k: "part", t: "rule", label: "Rules and limits", ...spot("rules"), r: 2.6, st: 1, p: "hub", date: rules.m.date,
+      detail: "The same Rules block is in every tracker map, so it is one node, linked only to the tracker.",
+      ...(pub ? {} : { src: rules.src, resume: resumePrompt(rules.src, rules.list[0].id), text: rules.list.map(n => n.text).join("\n") }) });
+    edges.push(["rules", "hub", "own"]);
+  }
+  for (const t of tools) {
+    const names = t.ps.map(p => p.label).join(", ");
+    nodes.push({ id: "tool:" + t.name, k: "tool", label: t.name, ...spot("tool:" + t.name), r: round(2.2 + 0.6 * Math.sqrt(t.ps.length)), st: 1, p: "hub",
+      detail: RETIRED[t.name] ? `${t.name}: retired, ${RETIRED[t.name]}. Still named in the map of ${names}, so that map is stale there.` : `A tool named in the tracker map of ${names}.` });
+    for (const p of t.ps) edges.push(["tool:" + t.name, p.id, "tool"]);
+  }
   const sharedWith = p => edges.filter(e => e[2] === "inferred" && (e[0] === p.id || e[1] === p.id))
     .map(e => `${list.find(q => q.id === (e[0] === p.id ? e[1] : e[0])).label} (${e[3].n} file${e[3].n === 1 ? "" : "s"})`);
   list.forEach((p, i) => {
@@ -309,12 +361,13 @@ export function buildMap({ tracker, maps = [], agents = [], mapsDir = "~/.claude
     nodes.push({ id: p.id, k: "project", label: p.label, x: round(p.x), y: round(p.y), r: round(p.r), st: 0, c: i, ...(hot ? { hot } : {}),
       detail: p === other ? `Chats and maps from folders that are not on the tracker. ${parts} map nodes, ${ags} agents shown.` :
         `Project${p.src.locked ? " (locked on the tracker)" : ""}. ${parts} map nodes, ${ags} agents shown` + (p.more ? `, ${p.more} more not shown` : "") + "." +
+        (p.moreT ? ` +${p.moreT} more tracker map nodes not shown (the ${LIMITS.trackerPerProject} with the most links are).` : "") +
         (p.src.updated ? ` Tracker updated ${p.src.updated}.` : "") + (sw.length ? ` Shares files with ${sw.join(", ")} (inferred).` : "") });
   });
   const pIndex = new Map(list.map((p, i) => [p.id, i]));
   for (const p of list) for (const c of p.kids) {
     const out = { id: c.id, k: c.k, label: c.label, x: round(p.x + c.x), y: round(p.y + c.y), r: round(c.r), st: c.k === "agent" ? 3 : 1, c: pIndex.get(p.id), p: p.id };
-    for (const f of ["t", "map", "file", "resume", "detail", "sub", "act"]) if (c[f] !== undefined) out[f] = c[f];
+    for (const f of ["t", "map", "file", "resume", "detail", "sub", "act", "text", "src", "date", "stale"]) if (c[f] !== undefined) out[f] = c[f];
     nodes.push(out);
   }
 
@@ -328,7 +381,7 @@ export function buildMap({ tracker, maps = [], agents = [], mapsDir = "~/.claude
   return {
     nodes, levels, stages, zRef: round4(zRef), ring: RING, span: round(span),
     edges: edges.filter(e => index.has(e[0]) && index.has(e[1])).map(e => (e[3] ? [index.get(e[0]), index.get(e[1]), e[2], e[3]] : [index.get(e[0]), index.get(e[1]), e[2]])),
-    colors: { ...COLORS, projects: list.map(p => p.color) },
+    colors: { ...COLORS, projects: list.map(p => p.color), types: TYPE_COLORS },
     projects: projects.length, active: activeAll.filter(n => !n.sub).length, glowMore: Math.max(0, activeAll.length - LIMITS.glow),
     generated: minute(now), activeMin: ACTIVE_MIN, public: pub,
   };
@@ -359,7 +412,7 @@ export function labelBox(n, z, pos, zRef) {
 const hit = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
 
 function placeLabels(nodes, levels, stages, zRef) {
-  const rank = { hub: 0, ring: 0, project: 1, part: 2, agent: 2 };
+  const rank = { hub: 0, ring: 0, project: 1, tool: 2, part: 2, agent: 2 };
   const order = nodes.slice().sort((a, b) => rank[a.k] - rank[b.k] || b.r - a.r || (a.id < b.id ? -1 : 1));
   for (const n of nodes) n.lv = "";
   levels.forEach(z => {
@@ -420,7 +473,8 @@ async function main() {
   if (!tracker.projects.length) { console.error("tongs-map: no projects found in " + tilde(join(trackerDir, "projects", "index.json"), home) + ". Use --tracker <folder>."); process.exit(1); }
   const { maps, problems } = readMaps(mapsDir);
   const { agents, problems: bad } = existsSync(logs) ? await readLogs(logs, { days, home, cache: join(home, ".claude", "tongs-maps", ".cache.json") }) : { agents: [], problems: [] };
-  const graph = buildMap({ tracker, maps, agents, mapsDir: tilde(mapsDir, home), pub });
+  const trackerMaps = readTrackerMaps(join(trackerDir, "maps"));
+  const graph = buildMap({ tracker, maps, agents, trackerMaps, trackerMapsDir: tilde(join(trackerDir, "maps"), home), mapsDir: tilde(mapsDir, home), pub });
   for (const p of problems) console.warn("tongs-map: " + p);
   if (bad.length) console.warn(`tongs-map: skipped ${bad.length} bad log lines`);
 
@@ -430,7 +484,10 @@ async function main() {
   if (!pub) writeFileSync(idx, "# Tongs maps\n\nOne line per chat map: project | map | goal | last updated. Read the map, then continue from a node.\n\n" +
     (maps.length ? indexLines(maps, tilde(mapsDir, home)).join("\n") : "No chat maps yet. Run /tongs in a chat to make one.") + "\n");
   const count = k => graph.nodes.filter(n => n.k === k).length;
-  console.log(`Tongs map: ${graph.projects} projects, ${maps.length} chat maps (${count("part")} nodes), ${count("agent")} agents, ${graph.active} chats active`);
+  console.log(`Tongs map: ${graph.projects} projects, ${maps.length} chat maps (${graph.nodes.filter(n => n.id.startsWith("m:")).length} nodes), ${count("agent")} agents, ${graph.active} chats active`);
+  const tparts = graph.nodes.filter(n => n.id.startsWith("t:")).length;
+  console.log(`Tracker maps: ${trackerMaps.length} files, ${tparts} nodes shown, ${graph.nodes.filter(n => n.k === "tool").length} tool dots` +
+    (trackerMaps.some(m => m.skipped) ? `, ${trackerMaps.reduce((s, m) => s + m.skipped, 0)} unknown headings skipped` : ""));
   console.log("Wrote  " + tilde(out, home));
   if (!pub) console.log("Wrote  " + tilde(idx, home));
   else console.log("Public version: no chat map text, file names, resume prompts or folders outside the tracker.");
