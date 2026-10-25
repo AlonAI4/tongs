@@ -435,17 +435,23 @@ export function labelBox(n, z, pos, zRef) {
 }
 const hit = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
 
+// A level's labels stay until the next level while the view zooms. Every edge of a label box moves one
+// way only as z grows (sizes shrink as 1/z and 1/sqrt(z)), so the box at any zoom in between lies inside
+// the box covering both ends: placing that one means no overlap anywhere in the interval.
+export const spanOf = (levels, i) => [levels[i], i + 1 < levels.length ? levels[i + 1] : levels[i] * 1.5];
+const cover = (a, b) => ({ x0: Math.min(a.x0, b.x0), x1: Math.max(a.x1, b.x1), y0: Math.min(a.y0, b.y0), y1: Math.max(a.y1, b.y1) });
+
 function placeLabels(nodes, levels, stages, zRef) {
   const rank = { hub: 0, ring: 0, project: 1, tool: 2, part: 2, agent: 2 };
   const order = nodes.slice().sort((a, b) => rank[a.k] - rank[b.k] || b.r - a.r || (a.id < b.id ? -1 : 1));
   for (const n of nodes) n.lv = "";
-  levels.forEach(z => {
-    const placed = [];
+  levels.forEach((z, i) => {
+    const [z1, z2] = spanOf(levels, i), placed = [];
     for (const n of order) {
       let got = ".";
       if (stageAlpha(n.st, z, stages) >= 1) {
         for (const pos of n.k === "ring" ? [1] : [0, 1, 2, 3]) {
-          const box = labelBox(n, z, pos, zRef);
+          const box = cover(labelBox(n, z1, pos, zRef), labelBox(n, z2, pos, zRef));
           if (!placed.some(p => hit(p, box))) { placed.push(box); got = String(pos); break; }
         }
       }

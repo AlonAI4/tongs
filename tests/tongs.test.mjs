@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSyn
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readTracker, readMaps, buildMap, renderPage, trackerIndexLines, labelBox, stageAlpha, indexLines, resumePrompt, contrast, projectColor, COLORS, TYPE_COLORS, LIMITS, RING } from "../scripts/tongs-map.mjs";
+import { readTracker, readMaps, buildMap, renderPage, trackerIndexLines, spanOf, labelBox, stageAlpha, indexLines, resumePrompt, contrast, projectColor, COLORS, TYPE_COLORS, LIMITS, RING } from "../scripts/tongs-map.mjs";
 import { parseTrackerMap } from "../scripts/tracker-map.mjs";
 import { FORGE, TONGS, GAME } from "./fixtures/tracker-maps.mjs";
 
@@ -323,4 +323,22 @@ test("index.md: one grep line per node type per project, and the most linked nod
   assert.ok(lines.includes("- goal | TONGS | 1 | Stop chats from wasting limits by re-reading hu..."));
   assert.ok(!lines.some(l => l.startsWith("- rule ")), "the shared Rules node is not a project's");
   assert.match(lines[lines.length - 1], /^- most linked \| FORGE: 14 1\.1: testers, debug, security, clean-up \(2\); /);
+});
+
+test("labels never collide while zooming between two levels either, on a graph with tracker maps", () => {
+  const s = sample();
+  for (let i = 0; i < 6; i++) s.trackerMaps.push({ ...s.trackerMaps[0], id: "p" + i });
+  for (let i = 0; i < 6; i++) s.tracker.projects.push({ id: "p" + i, title: "PROJECT " + i, updated: null, status: null, locked: false });
+  const g = buildMap(s);
+  g.levels.forEach((_, i) => {
+    const L = g.nodes.filter(x => x.lv[i] !== ".");
+    const [z1, z2] = spanOf(g.levels, i);
+    for (let k = 0; k <= 24; k++) { const z = z1 * (z2 / z1) ** (k / 24.0001);
+      const B = L.map(x => labelBox(x, z, Number(x.lv[i]), g.zRef));
+      for (let a = 0; a < B.length; a++) for (let b = a + 1; b < B.length; b++) {
+        const p = B[a], q = B[b];
+        assert.ok(!(p.x0 < q.x1 && q.x0 < p.x1 && p.y0 < q.y1 && q.y0 < p.y1), `${L[a].id} and ${L[b].id} collide at level ${i}, zoom ${z}`);
+      }
+    }
+  });
 });
