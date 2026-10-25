@@ -5,9 +5,12 @@
 //
 // Usage:  node tongs-map.mjs [--out <file.html>] [--no-open] [--maps <dir>] [--tracker <dir>]
 //                            [--logs <dir>] [--days <n>] [--public]
-// --public: the version for a website (the tracker's publish.sh uses it). Leaves out chat map text,
-//        file names, resume prompts and anything from folders that are not on the tracker, and writes
-//        no index.md. The page opens zoomed to a project with a link like tongs/#forge.
+// --public: the version for a website (the tracker's publish.sh uses it). An allowlist, not a scrub:
+//        the only text is from the tracker's map files, and only goal, decision, file (stats line) and
+//        done nodes, first line only; Open questions and Latest ask are left out, the Rules node shows
+//        only its title, and a node whose text matches PUBLIC_DROP is dropped whole (never edited).
+//        No chat map text, agent text, group chat board, file names from logs, resume prompts,
+//        or folders that are not on the tracker; no index.md. A link like tongs/#forge opens a project.
 //
 // Reads  ~/ai-tracker/projects (index.json and each project's "meta" only; never writes there),
 //        ~/ai-tracker/chat-maps/GROUP-CHAT.md (when it last changed, never its text),
@@ -167,6 +170,12 @@ export function trackerIndexLines(graph) {
   return lines;
 }
 
+// The public version drops (never edits) any tracker node whose text matches this.
+export const PUBLIC_TYPES = new Set(["goal", "decision", "file", "done"]);
+export const PUBLIC_DROP = /dad|mum|mom|brother|sister|school|passcode|password|£|\$|under-13|\bage\b|Ofer|Shayo|\/Users\/|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+const publicMap = m => ({ ...m, nodes: m.nodes.filter(n => n.t === "rule" || (PUBLIC_TYPES.has(n.t) && !PUBLIC_DROP.test(n.text)))
+  .map(n => (n.t === "rule" ? n : { ...n, text: n.text.split("\n")[0] })) });
+
 // ---------------------------------------------------------------- building
 const key = s => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 const GOLD = Math.PI * (3 - Math.sqrt(5));
@@ -202,8 +211,8 @@ function relax(list, { passes, gap, pull, springs = [], len = 0, keepOut = null 
   }
 }
 
-// pub: the version for a website. Chat map text, file names and resume prompts are left out (a part is
-// only its type), and nothing from folders that are not on the tracker is shown at all.
+// pub: the version for a website: see --public at the top. A chat map part is only its type, an agent
+// only "chat" or "subagent", and nothing from folders that are not on the tracker is shown at all.
 export function buildMap({ tracker, maps = [], agents = [], trackerMaps = [], trackerMapsDir = "~/ai-tracker/maps", mapsDir = "~/.claude/tongs-maps", now = Date.now(), pub = false }) {
   const projects = tracker.projects.map((p, i) => ({ id: "p:" + p.id, k: "project", label: p.title, src: p, color: projectColor(i), kids: [], more: 0 }));
   const lookup = new Map();
@@ -230,6 +239,7 @@ export function buildMap({ tracker, maps = [], agents = [], trackerMaps = [], tr
   }
 
   // tracker maps: each project's map file. Its nodes join the chat map nodes; links only inside one map.
+  if (pub) trackerMaps = trackerMaps.map(publicMap);
   const tLinks = trackerLinks(trackerMaps), tools = [];
   let rules = null;
   for (const m of trackerMaps) {
@@ -283,8 +293,8 @@ export function buildMap({ tracker, maps = [], agents = [], trackerMaps = [], tr
     for (const a of shown) {
       const mods = [...(a.models || new Map()).entries()].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1)).map(e => e[0]);
       const act = isActive(a);
-      const node = { id: "a:" + a.id, k: "agent", sub: a.sub ? 1 : 0, label: `${mods[0] || "other"} · ${fmt(a.fresh)}`, last: a.last,
-        detail: `${a.sub ? "Subagent" : "Chat"} in ${p.label}. Models: ${mods.join(", ") || "other"}. Fresh tokens ${fmt(a.fresh)}, cached ${fmt(a.cached)}.` +
+      const node = { id: "a:" + a.id, k: "agent", sub: a.sub ? 1 : 0, label: pub ? (a.sub ? "subagent" : "chat") : `${mods[0] || "other"} · ${fmt(a.fresh)}`, last: a.last,
+        detail: `${a.sub ? "Subagent" : "Chat"} in ${p.label}.` + (pub ? "" : ` Models: ${mods.join(", ") || "other"}. Fresh tokens ${fmt(a.fresh)}, cached ${fmt(a.cached)}.`) +
           (a.last ? ` Last wrote ${a.last.replace("T", " ")} UTC.` : "") + (act ? ` Active: wrote in the last ${ACTIVE_MIN} minutes.` : "") };
       if (act) activeAll.push(node);
       p.kids.push(node);
@@ -506,7 +516,7 @@ async function main() {
     (trackerMaps.some(m => m.skipped) ? `, ${trackerMaps.reduce((s, m) => s + m.skipped, 0)} unknown headings skipped` : ""));
   console.log("Wrote  " + tilde(out, home));
   if (!pub) console.log("Wrote  " + tilde(idx, home));
-  else console.log("Public version: no chat map text, file names, resume prompts or folders outside the tracker.");
+  else console.log("Public version: tracker map text only (goal, decision, file and done nodes, first line, risky lines dropped); no chat map text, agent text, board, log file names or resume prompts.");
   if (!args.includes("--no-open")) {
     const opener = platform() === "darwin" ? "open" : platform() === "linux" ? "xdg-open" : null;
     if (!opener) console.log("Open it in a browser: " + out);

@@ -21,7 +21,9 @@ export const MIN_LEN = 12;
 export const TOOLS = ["Netlify", "Supabase", "Cloudflare", "GitHub", "Opus", "Sonnet", "Haiku", "Fable"];
 export const RETIRED = { Netlify: "stopped using it on 14 Oct 2026" };
 
-const short = s => createHash("sha1").update(s).digest("hex").slice(0, 6);
+// 6 hex characters of the text's hash; the first window that does not spell "dad", so an id never
+// trips the public build's word filter
+const short = s => { const h = createHash("sha1").update(s).digest("hex"); let i = 0; while (h.slice(i, i + 6).includes("dad")) i++; return h.slice(i, i + 6); };
 
 export function parseTrackerMap(text, id) {
   const lines = String(text).split(/\r?\n/);

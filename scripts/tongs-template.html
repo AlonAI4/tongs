@@ -368,7 +368,7 @@ q.addEventListener("keydown", e => {
 const pad = v => String(v).padStart(2, "0");
 const built = new Date(Date.parse(G.generated + ":00Z"));
 const builtAt = `${pad(built.getHours())}:${pad(built.getMinutes())}`;
-document.getElementById("snap").textContent = `A snapshot built at ${builtAt}.` + (G.public ? " Public version: chat map text, file names and resume prompts are left out." : " Run tongs-map.mjs again to refresh it.");
+document.getElementById("snap").textContent = `A snapshot built at ${builtAt}.` + (G.public ? " Public version: only text from the tracker's map files is shown; chat maps, agents and resume prompts have no text here." : " Run tongs-map.mjs again to refresh it.");
 document.getElementById("idleDot").style.background = C.idle;
 (() => { const box = document.getElementById("types"); box.style.flexWrap = "wrap";
   for (const t of ["goal", "decision", "file", "done", "open", "place", "rule"]) { const d = el("span", null, "dot"); d.style.background = C.types[t]; box.append(d, el("span", t)); } })();
