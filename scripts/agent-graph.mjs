@@ -157,7 +157,7 @@ export async function readLogs(logsDir, { days = 14, home = homedir(), cache = n
     const session = sub ? rel[rel.length - 3] : basename(file, ".jsonl");
     const key = rel.join("/");
     const c = old.get(file);
-    const r = c && c.mtime === mt && c.size === size ? (hits++, c.r) : await readFile(file, home);
+    const r = c && c.mtime === mt && c.size === size && c.r && Array.isArray(c.r.usage) ? (hits++, c.r) : await readFile(file, home);
     kept[file] = { mtime: mt, size, r };
     const agent = {
       id: "a" + hash(key), parentKey: null,

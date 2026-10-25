@@ -74,8 +74,12 @@ const PATH_END = /\.(md|json|mjs|py|tsx|html)$/i;
 export function pathTokens(s) {
   const out = new Set();
   for (let w of s.split(/\s+/)) {
-    w = w.replace(/^[("'`]+/, "").replace(/[)"'`,.;:!?]+$/, "").replace(/^\.\//, "");
-    if (w.length >= 4 && /[a-z]/i.test(w) && !/^https?:/i.test(w) && (w.includes("/") || PATH_END.test(w))) out.add(w);
+    w = w.replace(/^[("'`]+/, "").replace(/[)"'`,.;:!?]+$/, "");
+    const rel = w.startsWith("./");
+    w = w.replace(/^\.\//, "");
+    if (rel && w.length >= 4) { out.add(w); continue; }
+    // a slash alone is not a path ("yes/no"): it needs ~/ or ./ at the start, a file ending, or two slashes
+    if (w.length >= 4 && /[a-z]/i.test(w) && !/^https?:/i.test(w) && (PATH_END.test(w) || /^~\//.test(w) || (w.match(/\//g) || []).length >= 2)) out.add(w);
   }
   return out;
 }

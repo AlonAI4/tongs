@@ -315,7 +315,7 @@ function select(n) {
   if (n.k === "part" && (n.id.startsWith("t:") || n.id === "rules")) {
     info.append(el("div", n.id === "rules" ? "rule, shared by every tracker map" : `${n.t} in the tracker map of ${p.label}`));
     if (n.text) { const t = el("div", n.text); t.style.cssText = "color:var(--ink);white-space:pre-wrap;margin:4px 0"; info.append(t); }
-    info.append(el("div", (n.src ? n.src + ", " : "") + "updated " + n.date));
+    info.append(el("div", [n.src, n.date && "updated " + n.date].filter(Boolean).join(", ")));
     if (n.stale) info.append(el("span", "may be stale", "state on"));
   } else if (n.k === "part") info.append(el("div", n.map ? `${n.t} in the chat map "${n.map}" (${p.label})` : `A ${n.t} node of a chat map in ${p.label}.`));
   if (n.detail) info.append(el("div", n.detail));

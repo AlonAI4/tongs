@@ -52,15 +52,16 @@ const planted = FORGE.replace("Goal: One of the best prompt tools there is. Free
 
 function fixtureGraph() {
   const tracker = { projects: [{ id: "forge", title: "FORGE" }, { id: "tongs", title: "TONGS" }], board: "2026-10-23T10:00" };
-  const maps = [{ name: "forge-1", file: "forge-1.html", json: null, title: "CHAT-MAP-TITLE", project: "forge", updated: "2026-10-20",
-    nodes: [{ id: "n0", label: "CHAT-MAP-TEXT", type: "goal" }], links: [] }];
-  const agents = [{ id: "a1", sub: false, parentKey: null, project: "forge", fresh: 5000, cached: 1, models: new Map([["AGENT-MODEL-TEXT", 1]]), paths: new Set(["~/forge/LOG-FILE-NAME.md"]), last: "2026-10-23T10:00" }];
+  const maps = [{ name: "forge-dads-game", file: "forge-dads-game.html", json: null, title: "CHAT-MAP-TITLE", project: "forge", updated: "2026-10-20",
+    nodes: [{ id: "ofer-node", label: "CHAT-MAP-TEXT", type: "goal" }, { id: "n1", label: "x", type: "done" }], links: [{ from: "ofer-node", to: "n1" }] }];
+  const agents = [{ id: "dad0cafe", sub: false, parentKey: null, project: "forge", fresh: 5000, cached: 1, models: new Map([["AGENT-MODEL-TEXT", 1]]), paths: new Set(["~/forge/LOG-FILE-NAME.md"]), last: "2026-10-23T10:00" }];
   return buildMap({ tracker, maps, agents, trackerMaps: [parseTrackerMap(planted, "forge"), parseTrackerMap(TONGS, "tongs")], now: Date.parse("2026-10-23T12:00:00Z"), pub: true });
 }
 
 test("public: planted bad lines are dropped whole, and only goal, decision, file and done nodes are shown", () => {
   const g = fixtureGraph(), html = renderPage(g);
   scanPublic(html);
+  assert.ok(g.edges.some(e => g.nodes[e[0]].k === "part" && g.nodes[e[1]].k === "part" && g.nodes[e[0]].p === "p:forge" && e[2] === "map"), "chat map links still drawn");
   for (const marker of ["OPEN-QUESTION-MARKER", "CHAT-MAP-TEXT", "CHAT-MAP-TITLE", "AGENT-MODEL-TEXT", "LOG-FILE-NAME", "Run eval 3", "Start a new chat", "~/anvil", "Read ~/", "Keep notes short"]) assert.ok(!html.includes(marker), marker);
   const T = g.nodes.filter(n => n.id.startsWith("t:"));
   assert.deepEqual([...new Set(T.map(n => n.t))].sort(), ["decision", "done", "file", "goal"].filter(t => T.some(n => n.t === t)).sort());

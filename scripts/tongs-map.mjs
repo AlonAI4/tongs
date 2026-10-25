@@ -402,9 +402,12 @@ export function buildMap({ tracker, maps = [], agents = [], trackerMaps = [], tr
   placeLabels(nodes, levels, stages, round4(zRef));
 
   const index = new Map(nodes.map((n, i) => [n.id, i]));
+  const out = edges.filter(e => index.has(e[0]) && index.has(e[1])).map(e => (e[3] ? [index.get(e[0]), index.get(e[1]), e[2], e[3]] : [index.get(e[0]), index.get(e[1]), e[2]]));
+  // public: a chat map node's id holds its file name and a log's hash; numbers instead (links use indexes)
+  if (pub) { let k = 0; for (const n of nodes) if (n.k === "agent" || n.id.startsWith("m:")) n.id = n.id[0] + ":" + k++; }
   return {
     nodes, levels, stages, zRef: round4(zRef), ring: RING, span: round(span),
-    edges: edges.filter(e => index.has(e[0]) && index.has(e[1])).map(e => (e[3] ? [index.get(e[0]), index.get(e[1]), e[2], e[3]] : [index.get(e[0]), index.get(e[1]), e[2]])),
+    edges: out,
     colors: { ...COLORS, projects: list.map(p => p.color), types: TYPE_COLORS },
     projects: projects.length, active: activeAll.filter(n => !n.sub).length, glowMore: Math.max(0, activeAll.length - LIMITS.glow),
     generated: minute(now), activeMin: ACTIVE_MIN, public: pub,

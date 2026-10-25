@@ -311,7 +311,7 @@ test("tracker nodes: the same inputs give the same bytes, and the resume line is
 test("the page: a clicked node shows its text, source, date, stale flag and up to 6 linked nodes; the UI says Tongs map", () => {
   assert.match(TEMPLATE, /near\.slice\(0, 6\)/);
   assert.match(TEMPLATE, /"may be stale", "state on"/);
-  assert.match(TEMPLATE, /n\.src \? n\.src \+ ", " : ""\) \+ "updated " \+ n\.date/);
+  assert.match(TEMPLATE, /\[n\.src, n\.date && "updated " \+ n\.date\]/);
   assert.match(TEMPLATE, /n\.stale \? a \* 0\.45 : a/, "stale nodes are dimmed, not hidden");
   assert.doesNotMatch(TEMPLATE, /Forge map/i);
   assert.match(TEMPLATE, /<title>Tongs map<\/title>/);

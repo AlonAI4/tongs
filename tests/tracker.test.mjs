@@ -62,6 +62,11 @@ test("links: paths, settings and slash commands inside one map; never from Rules
   assert.ok(!L.some(l => l[3] === "names /compact"));
 });
 
+test("path tokens: a slash alone is not a path", () => {
+  const maps = [parseTrackerMap("# A map (v1, updated 2026-01-01)\nDone:\n- 1.1 Decided the yes/no flow for the menu\n- 1.2 Built the yes/no screen and its tests\n- 1.3 Moved ./run.sh into place for the build\n- 1.4 Fixed ./run.sh so it stops on errors", "a"), parseTrackerMap("# B map (v1, updated 2026-01-01)\nGoal: another map, so run.sh is in only half", "b")];
+  assert.deepEqual(trackerLinks(maps).map(l => l[3]), ["names run.sh"]);
+});
+
 test("titles for the canvas and tools named by a map", () => {
   assert.equal(titleOf("Planned: 14 1.1: testers, debug, security, clean-up (Testers use v1.)"), "14 1.1: testers, debug, security, clean-up");
   assert.equal(titleOf("14.10 The fix plan: three agents argue, and the harness in scripts/eval.mjs"), "14.10 The fix plan");
