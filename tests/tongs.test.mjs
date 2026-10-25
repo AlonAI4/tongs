@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSyn
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readTracker, readMaps, buildMap, renderPage, labelBox, stageAlpha, indexLines, resumePrompt, contrast, projectColor, COLORS, TYPE_COLORS, LIMITS, RING } from "../scripts/tongs-map.mjs";
+import { readTracker, readMaps, buildMap, renderPage, trackerIndexLines, labelBox, stageAlpha, indexLines, resumePrompt, contrast, projectColor, COLORS, TYPE_COLORS, LIMITS, RING } from "../scripts/tongs-map.mjs";
 import { parseTrackerMap } from "../scripts/tracker-map.mjs";
 import { FORGE, TONGS, GAME } from "./fixtures/tracker-maps.mjs";
 
@@ -315,4 +315,12 @@ test("the page: a clicked node shows its text, source, date, stale flag and up t
   assert.match(TEMPLATE, /n\.stale \? a \* 0\.45 : a/, "stale nodes are dimmed, not hidden");
   assert.doesNotMatch(TEMPLATE, /Forge map/i);
   assert.match(TEMPLATE, /<title>Tongs map<\/title>/);
+});
+
+test("index.md: one grep line per node type per project, and the most linked nodes", () => {
+  const lines = trackerIndexLines(buildMap(sample()));
+  assert.ok(lines.includes("- decision | FORGE | 4 | 1 The first build"));
+  assert.ok(lines.includes("- goal | TONGS | 1 | Stop chats from wasting limits by re-reading hu..."));
+  assert.ok(!lines.some(l => l.startsWith("- rule ")), "the shared Rules node is not a project's");
+  assert.match(lines[lines.length - 1], /^- most linked \| FORGE: 14 1\.1: testers, debug, security, clean-up \(2\); /);
 });

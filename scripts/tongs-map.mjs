@@ -153,6 +153,20 @@ export function indexLines(maps, mapsDir) {
   });
 }
 
+// Tracker map nodes as grep lines: one per type per project (type | project | count | first title),
+// then the most linked nodes (links inside a map, not to the project dot).
+export function trackerIndexLines(graph) {
+  const one = s => s.replace(/[\r\n|]+/g, " ").replace(/\s+/g, " ").trim();
+  const T = graph.nodes.filter(n => n.id.startsWith("t:")), byId = new Map(graph.nodes.map(n => [n.id, n])), groups = new Map();
+  for (const n of T) { const k = n.p + "\t" + n.t; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(n); }
+  const lines = [...groups.values()].map(g => `- ${g[0].t} | ${one(byId.get(g[0].p).label)} | ${g.length} | ${one(g[0].label)}`);
+  const deg = new Map();
+  for (const e of graph.edges) if (e[2] === "map") for (const i of [e[0], e[1]]) if (graph.nodes[i].id.startsWith("t:")) deg.set(i, (deg.get(i) || 0) + 1);
+  const top = [...deg.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, 8);
+  if (top.length) lines.push("- most linked | " + top.map(([i, d]) => `${one(byId.get(graph.nodes[i].p).label)}: ${one(graph.nodes[i].label)} (${d})`).join("; "));
+  return lines;
+}
+
 // ---------------------------------------------------------------- building
 const key = s => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 const GOLD = Math.PI * (3 - Math.sqrt(5));
@@ -482,7 +496,9 @@ async function main() {
   writeFileSync(out, renderPage(graph));
   const idx = join(dirname(out), "index.md");
   if (!pub) writeFileSync(idx, "# Tongs maps\n\nOne line per chat map: project | map | goal | last updated. Read the map, then continue from a node.\n\n" +
-    (maps.length ? indexLines(maps, tilde(mapsDir, home)).join("\n") : "No chat maps yet. Run /tongs in a chat to make one.") + "\n");
+    (maps.length ? indexLines(maps, tilde(mapsDir, home)).join("\n") : "No chat maps yet. Run /tongs in a chat to make one.") + "\n" +
+    (trackerMaps.length ? "\n## Tracker map nodes\n\nOne line per node type per project: type | project | count | first node's title. Source: ~/ai-tracker/maps/<id>.md.\n\n" +
+      trackerIndexLines(graph).join("\n") + "\n" : ""));
   const count = k => graph.nodes.filter(n => n.k === k).length;
   console.log(`Tongs map: ${graph.projects} projects, ${maps.length} chat maps (${graph.nodes.filter(n => n.id.startsWith("m:")).length} nodes), ${count("agent")} agents, ${graph.active} chats active`);
   const tparts = graph.nodes.filter(n => n.id.startsWith("t:")).length;
