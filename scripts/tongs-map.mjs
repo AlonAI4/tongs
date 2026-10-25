@@ -356,11 +356,11 @@ export function buildMap({ tracker, maps = [], agents = [], trackerMaps = [], tr
   const sharedWith = p => edges.filter(e => e[2] === "inferred" && (e[0] === p.id || e[1] === p.id))
     .map(e => `${list.find(q => q.id === (e[0] === p.id ? e[1] : e[0])).label} (${e[3].n} file${e[3].n === 1 ? "" : "s"})`);
   list.forEach((p, i) => {
-    const parts = p.kids.filter(c => c.k === "part").length, ags = p.kids.length - parts, sw = sharedWith(p);
+    const parts = p.kids.filter(c => c.k === "part").length, ags = p.kids.length - parts, sw = sharedWith(p), tn = p.kids.filter(c => c.id.startsWith("t:")).length;
     const hot = p.kids.filter(c => c.act).length; // active agents here: the dot glows orange
     nodes.push({ id: p.id, k: "project", label: p.label, x: round(p.x), y: round(p.y), r: round(p.r), st: 0, c: i, ...(hot ? { hot } : {}),
       detail: p === other ? `Chats and maps from folders that are not on the tracker. ${parts} map nodes, ${ags} agents shown.` :
-        `Project${p.src.locked ? " (locked on the tracker)" : ""}. ${parts} map nodes, ${ags} agents shown` + (p.more ? `, ${p.more} more not shown` : "") + "." +
+        `Project${p.src.locked ? " (locked on the tracker)" : ""}. ${parts - tn} chat map nodes, ${tn} tracker map nodes, ${ags} agents shown` + (p.more ? `, ${p.more} more not shown` : "") + "." +
         (p.moreT ? ` +${p.moreT} more tracker map nodes not shown (the ${LIMITS.trackerPerProject} with the most links are).` : "") +
         (p.src.updated ? ` Tracker updated ${p.src.updated}.` : "") + (sw.length ? ` Shares files with ${sw.join(", ")} (inferred).` : "") });
   });

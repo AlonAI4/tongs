@@ -37,6 +37,8 @@ ul{list-style:none;margin:0;padding:0}
 #info{font-size:.85rem;color:var(--dim);overflow-wrap:anywhere;min-height:3em}
 #info b{display:block;color:var(--ink);font-size:.95rem;margin-bottom:2px}
 #info a{color:var(--ink)}
+#info .near li{margin:3px 0;font-size:.8rem}
+#info .near button{font-size:.75rem;padding:1px 6px}
 .state{display:inline-block;font:400 .7rem var(--f-mono);text-transform:uppercase;letter-spacing:.06em;padding:1px 6px;border-radius:3px;border:1px solid var(--dim);color:var(--dim);margin:2px 0 4px}
 .state.on{border-color:var(--active);color:var(--active)}
 button{font:inherit;font-size:.85rem;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 10px;cursor:pointer}
@@ -82,7 +84,8 @@ button[disabled]{opacity:.5;cursor:default}
       <div class="key"><span class="dot" style="background:var(--active);box-shadow:0 0 6px var(--active)"></span>active agent (wrote in the last 15 minutes)</div>
       <div class="key"><span class="dot" id="idleDot"></span>idle agent</div>
       <div class="key"><svg width="22" height="10" aria-hidden="true"><line x1="0" y1="5" x2="22" y2="5" stroke="#9aa7b4" stroke-dasharray="4 3"/></svg>inferred: two projects touched the same file</div>
-      <div class="key">Zoom in: project parts, then links, then agents.</div>
+      <div class="key" id="types"></div>
+      <div class="key">Zoom in: project parts, then links, then agents. Click a dot for its links.</div>
     </div>
     <div>
       <h2>In view</h2>
@@ -113,7 +116,11 @@ function at(n, z) {
   return [p.x + (n.x - p.x) * a, p.y + (n.y - p.y) * a, a];
 }
 const dotPx = (n, z) => n.k === "ring" ? 0 : Math.max(n.k === "project" || n.k === "hub" ? 3 : 1.5, n.r * Math.sqrt(z * G.zRef));
-const colorOf = n => n.k === "agent" ? (n.act ? C.active : C.idle) : n.k === "hub" ? C.hub : C.projects[n.c] || C.other;
+const colorOf = n => n.k === "agent" ? (n.act ? C.active : C.idle) : n.k === "hub" ? C.hub : n.k === "tool" ? C.tool : n.k === "part" ? C.types[n.t] || C.other : C.projects[n.c] || C.other;
+// each node's links, for the panel: [other node, the kind of link]
+const adj = N.map(() => []);
+const WHY = { own: "part of", map: "linked in its map", tool: "uses this tool", inferred: "shares files (inferred)", ring: "group chat" };
+for (const e of G.edges) { const w = (e[3] && e[3].why) || WHY[e[2]] || e[2]; adj[e[0]].push([N[e[1]], w]); adj[e[1]].push([N[e[0]], e[2] === "own" ? "has this part" : w]); }
 
 // ---------------------------------------------------------------- glow sprite (made once, never per-frame blur)
 const glow = document.createElement("canvas");
@@ -195,10 +202,9 @@ function draw(t) {
     const X1 = sx(x1), Y1 = sy(y1), X2 = sx(x2), Y2 = sy(y2);
     if (Math.max(X1, X2) < 0 || Math.min(X1, X2) > W || Math.max(Y1, Y2) < 0 || Math.min(Y1, Y2) > H) continue;
     ctx.globalAlpha = alpha;
-    ctx.strokeStyle = kind === "inferred" ? C.dim : kind === "ring" ? C.ring : (C.projects[a.c] || C.other);
+    ctx.strokeStyle = kind === "inferred" || kind === "tool" ? C.dim : kind === "ring" ? C.ring : (C.projects[a.c] || C.other);
     ctx.setLineDash(kind === "inferred" ? [5, 4] : []);
-    ctx.beginPath(); ctx.moveTo(X1, Y1); ctx.lineTo(X2, Y2); ctx.stroke();
-    if (kind === "inferred" && la > 0.5) { ctx.textBaseline = "alphabetic"; ctx.fillStyle = C.dim; ctx.font = "10px 'IBM Plex Mono', monospace"; ctx.textAlign = "center"; ctx.fillText("inferred", (X1 + X2) / 2, (Y1 + Y2) / 2 - 4); }
+    ctx.beginPath(); ctx.moveTo(X1, Y1); ctx.lineTo(X2, Y2); ctx.stroke(); // link labels are in the panel, on click, never on the canvas
   }
   ctx.setLineDash([]); ctx.globalAlpha = 1;
   // dots
@@ -207,7 +213,7 @@ function draw(t) {
     const [x, y, a] = P[i]; if (a < 0.01) continue;
     const X = sx(x), Y = sy(y), R = dotPx(n, z);
     if (!onScreen(X, Y, R + 20)) continue;
-    ctx.globalAlpha = a;
+    ctx.globalAlpha = n.stale ? a * 0.45 : a; // stale: dimmed, never hidden
     if (n.act === 1) { glowing = true; const g = R * 6 + 12; ctx.globalAlpha = a * pulse; ctx.drawImage(glow, X - g, Y - g, g * 2, g * 2); ctx.globalAlpha = a; }
     else if (n.hot) { glowing = true; const g = R * 4 + 16; ctx.globalAlpha = a * pulse * 0.8; ctx.drawImage(glow, X - g, Y - g, g * 2, g * 2); ctx.globalAlpha = a; } // a project with active agents
     ctx.fillStyle = colorOf(n); ctx.beginPath(); ctx.arc(X, Y, R, 0, 2 * Math.PI); ctx.fill();
@@ -306,8 +312,19 @@ function select(n) {
   info.append(el("b", n.label));
   if (n.k === "agent") info.append(el("span", n.act ? "active" : "idle", "state" + (n.act ? " on" : "")));
   const p = n.p ? byId.get(n.p) : null;
-  if (n.k === "part") info.append(el("div", n.map ? `${n.t} in the chat map "${n.map}" (${p.label})` : `A ${n.t} node of a chat map in ${p.label}.`));
+  if (n.k === "part" && (n.id.startsWith("t:") || n.id === "rules")) {
+    info.append(el("div", n.id === "rules" ? "rule, shared by every tracker map" : `${n.t} in the tracker map of ${p.label}`));
+    if (n.text) { const t = el("div", n.text); t.style.cssText = "color:var(--ink);white-space:pre-wrap;margin:4px 0"; info.append(t); }
+    info.append(el("div", (n.src ? n.src + ", " : "") + "updated " + n.date));
+    if (n.stale) info.append(el("span", "may be stale", "state on"));
+  } else if (n.k === "part") info.append(el("div", n.map ? `${n.t} in the chat map "${n.map}" (${p.label})` : `A ${n.t} node of a chat map in ${p.label}.`));
   if (n.detail) info.append(el("div", n.detail));
+  const near = adj[N.indexOf(n)].filter(x => x[0].k !== "ring");
+  if (near.length) {
+    const ul = el("ul"); ul.className = "near"; ul.setAttribute("aria-label", "Linked nodes");
+    for (const [m, why] of near.slice(0, 6)) { const li = el("li"), b = el("button", m.label); b.addEventListener("click", () => { select(m); zoomTo(m); }); li.append(b, el("span", " " + why)); ul.append(li); }
+    info.append(el("div", near.length > 6 ? `Linked to ${near.length}, the first 6:` : "Linked to:"), ul);
+  }
   if (n.file) { const a = el("a", "Open this chat map"); a.href = "./" + encodeURIComponent(n.file); const d = el("div"); d.append(a); info.append(d); }
   copy.disabled = !n.resume;
   request();
@@ -337,7 +354,7 @@ function showHits() {
 function choose() { const n = hits[cur]; if (!n) return; select(n); zoomTo(n); }
 q.addEventListener("input", () => {
   const s = q.value.trim().toLowerCase();
-  hits = s ? N.filter(n => n.label.toLowerCase().includes(s)).sort((a, b) => a.st - b.st || a.label.length - b.label.length).slice(0, 12) : [];
+  hits = s ? N.filter(n => n.label.toLowerCase().includes(s) || (n.text && n.text.toLowerCase().includes(s))).sort((a, b) => a.st - b.st || a.label.length - b.label.length).slice(0, 12) : [];
   cur = hits.length ? 0 : -1; showHits();
 });
 q.addEventListener("keydown", e => {
@@ -353,6 +370,8 @@ const built = new Date(Date.parse(G.generated + ":00Z"));
 const builtAt = `${pad(built.getHours())}:${pad(built.getMinutes())}`;
 document.getElementById("snap").textContent = `A snapshot built at ${builtAt}.` + (G.public ? " Public version: chat map text, file names and resume prompts are left out." : " Run tongs-map.mjs again to refresh it.");
 document.getElementById("idleDot").style.background = C.idle;
+(() => { const box = document.getElementById("types"); box.style.flexWrap = "wrap";
+  for (const t of ["goal", "decision", "file", "done", "open", "place", "rule"]) { const d = el("span", null, "dot"); d.style.background = C.types[t]; box.append(d, el("span", t)); } })();
 if (G.public) copy.parentElement.hidden = true; // no resume prompts in the public version
 if (G.glowMore) { const m = document.getElementById("more"); m.hidden = false; m.textContent = `+${G.glowMore} more active`; }
 function status() {
