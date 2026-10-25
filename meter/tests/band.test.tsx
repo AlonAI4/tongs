@@ -159,6 +159,37 @@ for (const [file, shown] of [
   })
 }
 
+test('Compact adds one line to the folder\'s TONGS-MAP.md under a Compact log heading, and never creates the file', async ($, on) => {
+  const writes: { path: string; text: string }[] = []
+  let map = '# Tongs map\n\nGoal: test\n'
+  let exists = true
+  on('ui.render', ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> })
+  mock.env(on, { HOME })
+  on('fs.read', ($: any, e: any) => ({ value: String(e.path).endsWith('TONGS-MAP.md') ? map : '{"limit": 400000}' }))
+  on('fs.write', ($: any, e: any) => { writes.push({ path: e.path, text: e.text }); map = e.text; return { value: undefined } })
+  on('fs.exists', () => ({ value: exists }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 300000, window: 1000000 }, rateLimits: [] } }))
+  on('session.cwd', () => ({ value: '/Users/test/game' }))
+  on('session.compact', () => ({ messages: [{ role: 'user', text: 'hi', toolUses: [] }], tokensBefore: 300000, tokensAfter: 40000 }))
+  on('ui.toast', ($: any, e: any) => { void e; return {} })
+  let ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
+  await ui.press({ key: 'compact' })
+  await ui.unmount()
+  expect(writes.length).toBe(1)
+  expect(writes[0].path).toBe('/Users/test/game/TONGS-MAP.md')
+  expect(writes[0].text).toMatch(/## Compact log\n- \d+ \w+ \d\d:\d\d: compacted, 300k to 40k \(meter\)\n$/)
+  ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
+  await ui.press({ key: 'compact' })
+  await ui.unmount()
+  expect(writes[1].text.match(/## Compact log/g)?.length).toBe(1) // a second compact adds under the same heading
+  expect(writes[1].text.match(/compacted, 300k to 40k/g)?.length).toBe(2)
+  exists = false
+  ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
+  await ui.press({ key: 'compact' })
+  await ui.unmount()
+  expect(writes.length).toBe(2) // no map in the folder: nothing written
+})
+
 test('without a TONGS-MAP.md in the folder, Compact leaves the map sentence out', async ($, on) => {
   const compacts: (string | undefined)[] = []
   on('ui.render', ($, e) => { const { Box } = $.ui.resolve(e); return <Box /> })

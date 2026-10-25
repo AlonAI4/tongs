@@ -155,6 +155,23 @@ async function switchTo($: EngineInterface, s: Stage) {
 
 let tongsRan = false // /tongs ran this turn: its /compact line, if any, is run when the turn ends
 
+// Each compact leaves one line in the folder's TONGS-MAP.md (never creating the file), so the map
+// shows where the chat was squashed and Claude knows a summary stands in for what came before.
+async function logCompact($: EngineInterface, before?: number, after?: number) {
+  try {
+    const path = `${await $.session.cwd()}/TONGS-MAP.md`
+    if (!(await $.fs.exists(path))) return
+    const text = await $.fs.read(path)
+    const d = new Date()
+    const when = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ' ' + d.toTimeString().slice(0, 5)
+    const sizes = before && after ? `${k(before)} to ${k(after)}` : 'size not reported'
+    const line = `- ${when}: compacted, ${sizes} (meter)`
+    const head = '## Compact log'
+    const body = text.includes(head) ? text.replace(head, `${head}\n${line}`) : `${text.replace(/\n*$/, '\n')}\n${head}\n${line}\n`
+    await $.fs.write(path, body)
+  } catch {} // the log is a bonus: a compact never fails because of it
+}
+
 async function compact($: EngineInterface, given?: string): Promise<boolean> {
   const instructions = given ?? await focus($)
   let ok = false
@@ -165,6 +182,7 @@ async function compact($: EngineInterface, given?: string): Promise<boolean> {
       const sizes = r.tokensBefore && r.tokensAfter ? ' ' + k(r.tokensBefore) + ' -> ' + k(r.tokensAfter) + '.' : ''
       $.ui.toast(`Compacted.${sizes} The meter updates after your next message.`)
       celebrate($, r.tokensBefore, r.tokensAfter)
+      await logCompact($, r.tokensBefore, r.tokensAfter)
       ok = true
     }
   } catch (e) {
@@ -176,6 +194,7 @@ async function compact($: EngineInterface, given?: string): Promise<boolean> {
         await $.command.run({ command: 'compact', args: instructions })
         $.ui.toast('Compacting... The meter updates after your next message.')
         celebrate($)
+        await logCompact($)
         ok = true
       } catch (e2) {
         $.ui.toast(`Could not compact: ${e2 instanceof Error ? e2.message : String(e2)}`)
