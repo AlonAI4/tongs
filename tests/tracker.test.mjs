@@ -62,6 +62,14 @@ test("links: paths, settings and slash commands inside one map; never from Rules
   assert.ok(!L.some(l => l[3] === "names /compact"));
 });
 
+test("a map with no header line keeps its first line; empty and junk files give no nodes", () => {
+  const m = parseTrackerMap("Goal: a goal long enough here\nDone:\n- 1.1 a step long enough here", "x");
+  assert.deepEqual(m.nodes.map(n => n.t), ["goal", "done"]);
+  assert.equal(m.date, null);
+  assert.deepEqual([parseTrackerMap("", "x").nodes, parseTrackerMap("\u0000 not a map", "x").nodes], [[], []]);
+  assert.equal(parseTrackerMap("# X map (v1, updated 2026-01-02)\r\nGoal: a goal long enough here\r\n", "x").nodes.length, 1, "CRLF lines");
+});
+
 test("path tokens: a slash alone is not a path", () => {
   const maps = [parseTrackerMap("# A map (v1, updated 2026-01-01)\nDone:\n- 1.1 Decided the yes/no flow for the menu\n- 1.2 Built the yes/no screen and its tests\n- 1.3 Moved ./run.sh into place for the build\n- 1.4 Fixed ./run.sh so it stops on errors", "a"), parseTrackerMap("# B map (v1, updated 2026-01-01)\nGoal: another map, so run.sh is in only half", "b")];
   assert.deepEqual(trackerLinks(maps).map(l => l[3]), ["names run.sh"]);

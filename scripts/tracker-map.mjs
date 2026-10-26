@@ -39,7 +39,7 @@ export function parseTrackerMap(text, id) {
     map.nodes.push({ id: nid, t, text: s, date: map.date, ...(/may be stale/i.test(s) ? { stale: true } : {}) });
   };
   let type = null;
-  for (let i = 1; i < lines.length; i++) {
+  for (let i = head ? 1 : 0; i < lines.length; i++) { // without a header line, line 1 is content too
     const line = lines[i];
     if (/^Latest step:/.test(line)) break;
     if (/^File:/.test(line)) { add("file", line); type = null; continue; }
