@@ -2,7 +2,7 @@
 //   node --test tests/*.test.mjs   (Node 24 reads a bare "tests/" as a module path, so name the files)
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { readLogs, projectOf, placeOf, modelName, fmt } from "../scripts/agent-graph.mjs";
@@ -143,6 +143,7 @@ test("the cache gives the same agents as an uncached run, reuses unchanged files
   const third = await readLogs(logsOf(home), { home, cache });
   assert.equal(third.cached, 1);
   assert.equal(same(third), same(await read(home)));
+  assert.deepEqual(readdirSync(dirname(cache)), [".cache.json"], "no temp file is left behind");
   // a cache made for another home folder is not used
   assert.equal((await readLogs(logsOf(home), { home: home + "x", cache })).cached, 0);
 });

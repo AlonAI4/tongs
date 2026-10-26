@@ -214,6 +214,8 @@ function relax(list, { passes, gap, pull, springs = [], len = 0, keepOut = null 
 // pub: the version for a website: see --public at the top. A chat map part is only its type, an agent
 // only "chat" or "subagent", and nothing from folders that are not on the tracker is shown at all.
 export function buildMap({ tracker, maps = [], agents = [], trackerMaps = [], trackerMapsDir = "~/ai-tracker/maps", mapsDir = "~/.claude/tongs-maps", now = Date.now(), pub = false }) {
+  // public: a project whose id or title matches PUBLIC_DROP is left out whole, like a node
+  if (pub) tracker = { ...tracker, projects: tracker.projects.filter(p => !PUBLIC_DROP.test(p.id) && !PUBLIC_DROP.test(p.title || "")) };
   const projects = tracker.projects.map((p, i) => ({ id: "p:" + p.id, k: "project", label: p.title, src: p, color: projectColor(i), kids: [], more: 0 }));
   const lookup = new Map();
   for (const p of projects) for (const k of [key(p.src.id), key(p.src.title)]) if (k && !lookup.has(k)) lookup.set(k, p);

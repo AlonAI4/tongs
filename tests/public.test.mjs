@@ -74,6 +74,16 @@ test("public: planted bad lines are dropped whole, and only goal, decision, file
   assert.ok(g.nodes.filter(n => n.k === "agent").every(n => n.label === "chat" || n.label === "subagent"));
 });
 
+test("public: a project whose title or id matches a pattern is left out whole, with its nodes", () => {
+  const tracker = { projects: [{ id: "forge", title: "FORGE" }, { id: "dads-site", title: "Dad's site" }, { id: "x", title: "Ofer Shayo shop" }, { id: "tongs", title: "TONGS" }], board: null };
+  const trackerMaps = ["forge", "dads-site", "x", "tongs"].map(id => parseTrackerMap(TONGS, id));
+  const g = buildMap({ tracker, trackerMaps, pub: true });
+  assert.deepEqual(g.nodes.filter(n => n.k === "project").map(n => n.label), ["FORGE", "TONGS"]);
+  assert.ok(!g.nodes.some(n => /dads-site|:x:/.test(n.id)));
+  scanPublic(renderPage(g));
+  assert.equal(buildMap({ tracker, trackerMaps }).nodes.filter(n => n.k === "project").length, 4, "the normal map keeps them all");
+});
+
 test("public: the scan fails when any pattern is in the page", () => {
   const html = renderPage(fixtureGraph());
   for (const bad of ["my dad", "£5", "$5", "/Users/x", "0f8fad5b-d9cb-469f-a165-70867728950e", "AGE"]) {

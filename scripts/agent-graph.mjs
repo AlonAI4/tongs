@@ -16,7 +16,7 @@
 //   first, last  the minutes it first and last wrote, from the logs (never the clock).
 // Never message text, prompts or session ids. Zero dependencies, works offline.
 
-import { readdirSync, statSync, createReadStream, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readdirSync, statSync, createReadStream, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, relative, sep, basename, dirname } from "node:path";
 import { homedir } from "node:os";
@@ -178,7 +178,8 @@ export async function readLogs(logsDir, { days = 14, home = homedir(), cache = n
     }
   }
   if (cache) {
-    try { mkdirSync(dirname(cache), { recursive: true }); writeFileSync(cache, JSON.stringify({ v: CACHE_V, home, files: kept })); } catch {} // a cache that cannot be written only costs speed
+    // written to a temp file and renamed, so a second build running at the same time never reads half a file
+    try { mkdirSync(dirname(cache), { recursive: true }); const tmp = cache + "." + process.pid + ".tmp"; writeFileSync(tmp, JSON.stringify({ v: CACHE_V, home, files: kept })); renameSync(tmp, cache); } catch {} // a cache that cannot be written only costs speed
   }
   return { agents: [...agents.values()].filter(a => a.fresh + a.cached > 0), problems, files: files.length, lines, cached: hits };
 }
