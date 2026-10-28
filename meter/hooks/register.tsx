@@ -123,6 +123,22 @@ let switchDone = false // pressed or dismissed: hidden while the draft stays in 
 let busy = false // Claude is replying: /model does nothing then, so no button
 let failed: string | undefined // why the last switch did not work, shown in the band until the draft changes
 const FAMILIES = ['haiku', 'sonnet', 'opus', 'fable']
+let expected: Stage | undefined // the model a switch just set: checked again later, in case the app put it back
+
+// /model can read as done and then be undone (the app's own picker or a remote client sets its model
+// again), so the model is read once more a moment later and when the next message starts.
+async function recheck($: EngineInterface) {
+  const s = expected
+  if (!s) return
+  let now = ''
+  try { now = (await $.session.model()).toLowerCase() } catch { return }
+  if (now.includes(s.family)) return
+  expected = undefined
+  switchDone = false
+  failed = `The model went back to "${now}" after the switch to ${s.label}. Pick ${s.label} in the model picker (bottom right).`
+  $.ui.toast(failed)
+  $.ui.invalidate('ui.render')
+}
 
 async function switchTo($: EngineInterface, s: Stage) {
   if (busy) { failed = 'Claude is still replying. Switch when it has finished.'; $.ui.toast(failed); $.ui.invalidate('ui.render'); return }
@@ -143,6 +159,8 @@ async function switchTo($: EngineInterface, s: Stage) {
     $.ui.toast(failed)
     return
   }
+  expected = s
+  try { $.clock.after(2000, () => { void recheck($) }) } catch {} // no timer here: the next message start checks
   // The model switch keeps the effort you had, and /effort prints a line in the chat, so only
   // set it when the stage wants something other than the usual medium.
   if (s.effort === 'medium') { $.ui.toast(`Switched to ${s.label}.`); return }
@@ -268,8 +286,8 @@ export const register: Register = on => {
     if (s?.key !== stage?.key) { switchDone = false; failed = undefined; stage = s; $.ui.invalidate('ui.render') }
     return r
   })
-  on('turn.start', ($, e, next) => {
-    if (e.agentId === undefined) { busy = true; $.ui.invalidate('ui.render') }
+  on('turn.start', async ($, e, next) => {
+    if (e.agentId === undefined) { busy = true; $.ui.invalidate('ui.render'); await recheck($); expected = undefined }
     return next(e)
   })
 

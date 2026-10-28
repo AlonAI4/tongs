@@ -423,6 +423,24 @@ test('stage switch: the offer lasts one message, and a /model that did not chang
   expect(await switchLabel($)).toBeUndefined()
 })
 
+test('stage switch: a model the app puts back is said when the next message starts, and a kept one is not', async ($, on) => {
+  const model = { now: 'claude-opus-5-5' }, toasts: string[] = []
+  await switchSetup(on, model, [])
+  on('ui.toast', ($: any, e: any) => { toasts.push(e.text); return {} })
+  on('turn.start', ($: any, e: any) => ({ text: e.text, turnId: e.turnId }))
+  await draft($, 'ask me questions about the plan')
+  const ui = await $.ui.mount({ plugin: 'tongs-meter', surface: 'terminal', ...BAND })
+  await ui.press({ key: 'switch' })
+  await ui.unmount()
+  expect(toasts.at(-1)).toBe('Switched to sonnet 5.5.')
+  model.now = 'claude-opus-5-5' // the app sets its own model again before the message goes
+  await $.turn.start({ text: 'ask me questions about the plan', turnId: 't1' })
+  expect(toasts.at(-1)).toBe('The model went back to "claude-opus-5-5" after the switch to sonnet 5.5. Pick sonnet 5.5 in the model picker (bottom right).')
+  const n = toasts.length
+  await $.turn.start({ text: 'again', turnId: 't2' })
+  expect(toasts.length).toBe(n) // said once
+})
+
 test('stage switch: hidden when the current model cannot be read', async ($, on) => {
   const model = { now: 'some-custom-model' }
   await switchSetup(on, model, [])
